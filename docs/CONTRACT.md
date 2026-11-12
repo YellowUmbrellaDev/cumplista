@@ -23,7 +23,7 @@ src/entry-worker.ts  src/entry-node.ts
 test/*.test.ts
 --- slice UI ---
 src/views/*.tsx          layout + one component per page, takes props, no DB access
-src/views/props.ts       FIXED by CORE first (see "View props")
+src/views/props.ts       FIXED (already written)
 src/i18n/locales/{en,es}.ts
 public/app.css  public/app.js
 ```
@@ -80,7 +80,7 @@ Locale resolution: `lang` cookie, else Accept-Language, else `en`. A list's loca
 
 Extra owner features IN scope (small): item `received` toggle, drag-free reorder by up/down buttons, "price total" of the whole list, `occasion_date` with days left. Out of scope: accounts, images, comments, multiple lists per user UI, currency selection.
 
-## View props (CORE writes `src/views/props.ts` before UI starts, UI consumes)
+## View props (`src/views/props.ts`, fixed by the lead)
 
 Each page has one props type: `CreateListPage`, `CreatedPage`, `OwnerPage {list, items: OwnerItem[], guests: OwnerGuest[], totalCents, shareMessages: Record<GuestId,{text,url,mailto}>}`, `JoinPage {list, error?}`, `GuestListPage {list, guestName, items: GuestItem[]}`, plus a shared `Chrome {t, locale, locales, path}`. Views import types from `../domain/types.js` and never touch `Deps`.
 
@@ -89,7 +89,7 @@ Each page has one props type: `CreateListPage`, `CreatedPage`, `OwnerPage {list,
 Mode: Operate for owner/guest pages, Persuade-lite for the create page. Subject: gift giving, wrapping.
 - Color: paper `#F6F4FF` (cool lavender white, NOT cream), ink `#1D1840`, ribbon `#FF4B5C`, sun `#FFC53D`, mint `#2DBE8C` for "mine"/success, muted `#6B678A`, card `#FFFFFF`. Dark mode via `prefers-color-scheme`: bg `#14112B`, card `#1E1A3D`.
 - Type: Bricolage Grotesque Variable (self-hosted from `@fontsource-variable/bricolage-grotesque`, copy the woff2 to `public/fonts/`) for everything. Display headings use its width/optical axes at large size, body at 17px/1.5. No monospace, no all-caps labels, no eyebrow labels.
-- Memorable thing, and the only flourish: a claimed item is "wrapped". The row is blurred (`filter: blur(6px)` on the content, `user-select: none`, `aria-hidden` on the blurred name only when... NO: keep text readable to screen readers via a visually-hidden full label), a ribbon stripe crosses the row, and a gift tag hangs off it with the claimer's name. "Mine" is the same row unblurred with a mint tag "You". Free rows are plain white cards. The blur must be CSS only so server rendered; the underlying text is still in the HTML for guests (it is their data to see), the intent is spoiler-protection, not secrecy from guests.
+- Memorable thing, and the only flourish: a claimed item is "wrapped". The row content is blurred (`filter: blur(6px)`, `user-select: none`) while a visually-hidden full label keeps it readable to screen readers, a ribbon stripe crosses the row, and a gift tag hangs off it with the claimer's name. "Mine" is the same row unblurred with a mint tag "You". Free rows are plain white cards. The blur must be CSS only so server rendered; the underlying text is still in the HTML for guests (it is their data to see), the intent is spoiler-protection, not secrecy from guests.
 - Layout: single column max 40rem centered, left aligned, generous spacing, 8px grid, radius 14px on cards and 999px on tags only. Checklist rows have a large round checkbox on the left. Owner page: checklist first, guests panel below, add-item form as a persistent first row. Mobile first, tap targets >= 44px.
 - Motion: none on load. Only state feedback (claim wraps with a 200ms ribbon sweep, respects `prefers-reduced-motion`).
 - Copy: sentence case, plain verbs, errors say what to do. Spanish uses "tú", neutral ES-ES/LatAm wording.
