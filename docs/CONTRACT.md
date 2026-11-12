@@ -16,7 +16,9 @@ src/domain/lists.ts      services, pure over Deps
 src/domain/claims.ts
 src/domain/ideas.ts      side gifts services (CORE)
 src/domain/guests.ts
-src/domain/auth.ts       tokens, cookie sessions, throttle
+src/domain/auth.ts       tokens and cookie sessions
+src/domain/rate.ts       atomic SQL rate limiter over attempts
+src/domain/ip.ts         IPv4 and IPv6 /64 client bucketing
 src/domain/invite.ts     invite message + share link + mail composition
 src/adapters/d1.ts  src/adapters/sqlite.ts  src/adapters/mail.ts
 src/app.ts               Hono routes, builds the page props and calls views
@@ -43,12 +45,16 @@ public/app.css  public/app.js
 - `url` must parse as `http:` or `https:`, else rejected. Rendered with `rel="noopener noreferrer nofollow" target="_blank"`.
 - Name max 120, details max 1000, title max 120, guest name max 60.
 - Invite code: 4 digits, unique per list, generated with `crypto.getRandomValues` rejection sampling. Max 200 guests per list so the space never runs out.
-- Guest joins at `GET /l/:listId` (code form) -> `POST /l/:listId/join` with code. Matching a guest row sets a signed cookie `g_<listId>`. Wrong code: record in `join_failures`; more than 8 failures in 10 min for (list, client ip) -> 429 with a localized message. Constant-time comparison of codes.
-- If guest `joined_at` is null set it now (owner may see "joined" boolean only).
+- Guest joins at `GET /l/:listId` and submits the code form to `POST /l/:listId/join`. Before checking the code, `joinWithCode` reserves an atomic row in `attempts` via `take` in `src/domain/rate.ts`, capped at 8 failed attempts per 10 minutes per list and client bucket and 30 failed attempts per 24 hours per list across all clients, returning HTTP 429 with `error.throttled`. Codes are compared in constant time.
+- Invite codes are single-use. Matching a guest row atomically runs `UPDATE guests SET joined_at = ? WHERE id = ? AND list_id = ? AND joined_at IS NULL`. When `changes === 1`, the reserved `attempts` row is released and a signed cookie `g_<listId>` is set. When `changes === 0`, the `attempts` row is kept and `POST /l/:listId/join` returns HTTP 401 with `error.code_used`.
+- Once a guest has joined and `joined_at` is set, `OwnerGuest` exposes `joined` as `true` and `code` as `null`. The owner page renders neither the code nor any share links for a joined guest.
+- Regenerating a guest code via `POST /o/:id/guests/:g/code` assigns a new 4-digit code and sets `joined_at = NULL`. Guest `Principal` payloads carry `role`, `listId`, `guestId`, and `code`, and `getGuestForList` checks `WHERE id = ? AND list_id = ? AND code = ?`, so regenerating a code or deleting the guest immediately invalidates prior cookies and clears `g_<listId>`.
+- Client bucketing via `ipBucket` in `src/domain/ip.ts` over `Deps.clientIp` normalizes IPv4 addresses and reduces IPv6 addresses to their expanded `/64` prefix, returning `"unknown"` when absent. Cloudflare Workers read only `cf-connecting-ip`. Node reads the socket `remoteAddress`, or the last `x-forwarded-for` entry when `TRUST_PROXY=1`.
+- Mail abuse limits use `attempts` as well. `POST /lists` allows 5 lists per hour per client bucket under `kind` `"list-create"`, returning HTTP 429 with `error.rate_limited`. Guest invite emails in `addGuest` and `regenerateGuestCode` allow 30 emails per 24 hours per list under `kind` `"guest-mail"`, still saving the guest change with `flash=mail-failed` when capped. Mail subjects strip ASCII control characters.
 - Claim: `INSERT INTO claims` and rely on the PK. Constraint violation means "taken by someone else" -> re-render with a localized message, never a 500. Guests can unclaim only their own claim. A received item cannot be claimed or unclaimed.
 - Owner auth: creating a list returns an owner token (32 random bytes, base64url) once, stored as SHA-256 hash. The owner reaches `/o/:listId?k=<token>` from the email link, which sets a signed cookie and redirects to `/o/:listId`. Token is emailed to `owner_email` (console mailer logs it in dev). The create success page also shows the manage link once.
-- Sessions: HMAC-SHA256 cookie value `<principal-json-b64url>.<sig>` using `SESSION_SECRET`, `HttpOnly; Secure (when APP_URL is https); SameSite=Lax; Path=/`. Web Crypto only so it works on both runtimes.
-- CSRF: all mutations are POST forms with SameSite=Lax cookies, and the server additionally rejects POSTs whose `Origin` header is present and differs from `APP_URL`'s origin.
+- Sessions: HMAC-SHA256 cookie value `<principal-json-b64url>.<sig>` using `SESSION_SECRET`, with `HttpOnly`, `Secure` when `APP_URL` uses `https`, `SameSite=Lax`, and `Path=/`. Web Crypto only so it works on both runtimes.
+- Every `POST` route enforces a 16 KB body limit returning HTTP 413, and `readForm` accepts only `application/x-www-form-urlencoded` returning HTTP 415. All mutations check that any `Origin` header matches `APP_URL`'s origin and return HTTP 403 on mismatch. `POST /lang` validates `back` with `parseSafeBack`, rejecting control characters, backslashes, and cross-origin targets.
 - Everything user-supplied is escaped by JSX. No `dangerouslySetInnerHTML` except none at all.
 
 ## Invitations (two paths, same message)
@@ -85,7 +91,7 @@ Guests adding gifts is IN scope (see Domain rules). Extra owner features IN scop
 
 ## View props (`src/views/props.ts`, fixed by the lead)
 
-Each page has one props type: `CreateListPage`, `CreatedPage`, `OwnerPage {list, items: OwnerItem[], guests: OwnerGuest[], totalCents, shareMessages: Record<GuestId,{text,url,mailto}>}`, `JoinPage {list, error?}`, `GuestListPage {list, guestName, items: GuestItem[], sideGifts: SideGift[], flash?}`, plus a shared `Chrome {t, locale, locales, path}`. Views import types from `../domain/types.js` and never touch `Deps`.
+Each page has one props type among `CreateListPage`, `CreatedPage`, `OwnerPage`, `JoinPage`, and `GuestListPage`, plus a shared `Chrome` record. `CreateListPage` accepts `error` set to `"invalid"` or `"rate-limited"`. `OwnerPage` carries `shares` keyed by `GuestId` for unjoined guests only. `JoinPage` accepts `error` set to `"wrong-code"`, `"code-used"`, or `"throttled"`. Views import types from `../domain/types.js` and never touch `Deps`.
 
 ## Visual design (DESIGN direction, set by the lead)
 

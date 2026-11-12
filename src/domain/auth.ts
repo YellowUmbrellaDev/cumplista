@@ -163,7 +163,12 @@ function isPrincipal(value: unknown): value is Principal {
   if (!("role" in value) || !("listId" in value) || !isListId(value.listId)) return false;
   if (value.role === "owner") return true;
   if (value.role === "guest") {
-    return "guestId" in value && isGuestId(value.guestId);
+    return (
+      "guestId" in value &&
+      isGuestId(value.guestId) &&
+      "code" in value &&
+      isInviteCode(value.code)
+    );
   }
   return false;
 }

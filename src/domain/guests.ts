@@ -9,6 +9,7 @@ import {
 } from "./auth.js";
 import { composeGuestInviteMail } from "./invite.js";
 import { getList } from "./lists.js";
+import { DAY_MS, take } from "./rate.js";
 import type {
   GuestId,
   InviteCode,
@@ -21,6 +22,8 @@ import type {
 export const MAX_GUESTS_PER_LIST = 200;
 export const THROTTLE_MAX_FAILURES = 8;
 export const THROTTLE_WINDOW_MS = 10 * 60 * 1000;
+export const THROTTLE_LIST_DAILY_LIMIT = 30;
+export const GUEST_MAIL_DAILY_LIMIT = 30;
 
 export type AddGuestInput = {
   name: string;
@@ -37,12 +40,21 @@ type GuestRow = {
 
 function toOwnerGuest(row: GuestRow): OwnerGuest | null {
   if (!isGuestId(row.id) || !isInviteCode(row.code)) return null;
+  if (row.joined_at !== null) {
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      joined: true,
+      code: null,
+    };
+  }
   return {
     id: row.id,
     name: row.name,
     email: row.email,
+    joined: false,
     code: row.code,
-    joined: row.joined_at !== null,
   };
 }
 
@@ -53,6 +65,32 @@ function isUniqueConstraintError(err: unknown): boolean {
       err.message,
     )
   );
+}
+
+async function sendGuestInviteIfAllowed(
+  deps: Deps,
+  list: ListRecord,
+  guest: { email: string; code: InviteCode },
+): Promise<boolean> {
+  const nowMs = deps.now().getTime();
+  const ticket = await take(
+    deps,
+    { kind: "guest-mail", scope: list.id, client: "", at: nowMs },
+    [
+      {
+        kind: "guest-mail",
+        scope: list.id,
+        client: null,
+        limit: GUEST_MAIL_DAILY_LIMIT,
+        windowMs: DAY_MS,
+      },
+    ],
+  );
+  if (!ticket.ok) {
+    return false;
+  }
+  const mail = composeGuestInviteMail(list, guest, deps.env.APP_URL);
+  return sendMail(deps.mailer, mail);
 }
 
 export async function listOwnerGuests(deps: Deps, listId: ListId): Promise<OwnerGuest[]> {
@@ -130,12 +168,10 @@ export async function addGuest(
 
   let emailSent = true;
   if (input.email !== null) {
-    const mail = composeGuestInviteMail(
-      listResult.value,
-      { email: input.email, code: chosenCode },
-      deps.env.APP_URL,
-    );
-    emailSent = await sendMail(deps.mailer, mail);
+    emailSent = await sendGuestInviteIfAllowed(deps, listResult.value, {
+      email: input.email,
+      code: chosenCode,
+    });
   }
 
   return { ok: true, value: { guest, emailSent } };
@@ -170,23 +206,23 @@ export async function regenerateGuestCode(
     guestId,
     listId,
   );
-  if (!guestRow) return { ok: false, error: "not-found" };
-  const currentGuest = toOwnerGuest(guestRow);
-  if (!currentGuest) return { ok: false, error: "not-found" };
+  if (!guestRow || !isGuestId(guestRow.id) || !isInviteCode(guestRow.code)) {
+    return { ok: false, error: "not-found" };
+  }
 
   const existingRows = await deps.sql.all<{ code: string }>(
     `SELECT code FROM guests WHERE list_id = ?`,
     listId,
   );
   const usedCodes = new Set(existingRows.map((row) => row.code));
-  usedCodes.add(currentGuest.code);
+  usedCodes.add(guestRow.code);
 
   let nextCode: InviteCode | null = null;
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = generateInviteCode(usedCodes);
     try {
       const res = await deps.sql.run(
-        `UPDATE guests SET code = ? WHERE id = ? AND list_id = ?`,
+        `UPDATE guests SET code = ?, joined_at = NULL WHERE id = ? AND list_id = ?`,
         candidate,
         guestId,
         listId,
@@ -205,15 +241,20 @@ export async function regenerateGuestCode(
 
   if (!nextCode) return { ok: false, error: "not-found" };
 
-  const updated: OwnerGuest = { ...currentGuest, code: nextCode };
+  const updated: OwnerGuest = {
+    id: guestRow.id,
+    name: guestRow.name,
+    email: guestRow.email,
+    joined: false,
+    code: nextCode,
+  };
+
   let emailSent = true;
   if (updated.email !== null) {
-    const mail = composeGuestInviteMail(
-      listResult.value,
-      { email: updated.email, code: nextCode },
-      deps.env.APP_URL,
-    );
-    emailSent = await sendMail(deps.mailer, mail);
+    emailSent = await sendGuestInviteIfAllowed(deps, listResult.value, {
+      email: updated.email,
+      code: nextCode,
+    });
   }
 
   return { ok: true, value: { guest: updated, emailSent } };
@@ -223,11 +264,13 @@ export async function getGuestForList(
   deps: Deps,
   listId: ListId,
   guestId: GuestId,
+  code: InviteCode,
 ): Promise<Result<{ id: GuestId; name: string }, "not-found">> {
   const row = await deps.sql.first<{ id: string; name: string }>(
-    `SELECT id, name FROM guests WHERE id = ? AND list_id = ?`,
+    `SELECT id, name FROM guests WHERE id = ? AND list_id = ? AND code = ?`,
     guestId,
     listId,
+    code,
   );
   if (!row || !isGuestId(row.id)) return { ok: false, error: "not-found" };
   return { ok: true, value: { id: row.id, name: row.name } };
@@ -240,25 +283,35 @@ export async function joinWithCode(
   client: string,
 ): Promise<
   Result<
-    { list: ListRecord; guestId: GuestId; guestName: string },
-    "not-found" | "throttled" | "wrong-code"
+    { list: ListRecord; guestId: GuestId; guestName: string; code: InviteCode },
+    "not-found" | "throttled" | "wrong-code" | "code-used"
   >
 > {
   const listResult = await getList(deps, listId);
   if (!listResult.ok) return listResult;
 
   const nowMs = deps.now().getTime();
-  const windowStart = nowMs - THROTTLE_WINDOW_MS;
-
-  const failCountRow = await deps.sql.first<{ count: number }>(
-    `SELECT COUNT(*) AS count
-     FROM join_failures
-     WHERE list_id = ? AND client = ? AND failed_at >= ?`,
-    listId,
-    client,
-    windowStart,
+  const ticket = await take(
+    deps,
+    { kind: "join", scope: listId, client, at: nowMs },
+    [
+      {
+        kind: "join",
+        scope: listId,
+        client,
+        limit: THROTTLE_MAX_FAILURES,
+        windowMs: THROTTLE_WINDOW_MS,
+      },
+      {
+        kind: "join",
+        scope: listId,
+        client: null,
+        limit: THROTTLE_LIST_DAILY_LIMIT,
+        windowMs: DAY_MS,
+      },
+    ],
   );
-  if ((failCountRow?.count ?? 0) >= THROTTLE_MAX_FAILURES) {
+  if (!ticket.ok) {
     return { ok: false, error: "throttled" };
   }
 
@@ -277,37 +330,31 @@ export async function joinWithCode(
     constantTimeEqual("0000", probe);
   }
 
-  let matched: OwnerGuest | null = null;
+  let matched: { id: GuestId; name: string; code: InviteCode } | null = null;
   for (const row of rows) {
     const equal = constantTimeEqual(row.code, probe);
-    const parsed = toOwnerGuest(row);
-    if (validFormat && equal && parsed) {
-      matched = parsed;
+    if (validFormat && equal && isGuestId(row.id) && isInviteCode(row.code)) {
+      matched = { id: row.id, name: row.name, code: row.code };
     }
   }
 
   if (!matched) {
-    await deps.sql.batch([
-      {
-        sql: `DELETE FROM join_failures WHERE list_id = ? AND failed_at < ?`,
-        params: [listId, windowStart],
-      },
-      {
-        sql: `INSERT INTO join_failures (list_id, client, failed_at) VALUES (?, ?, ?)`,
-        params: [listId, client, nowMs],
-      },
-    ]);
     return { ok: false, error: "wrong-code" };
   }
 
-  if (!matched.joined) {
-    await deps.sql.run(
-      `UPDATE guests SET joined_at = COALESCE(joined_at, ?) WHERE id = ? AND list_id = ?`,
-      deps.now().toISOString(),
-      matched.id,
-      listId,
-    );
+  const consumed = await deps.sql.run(
+    `UPDATE guests
+     SET joined_at = ?
+     WHERE id = ? AND list_id = ? AND joined_at IS NULL`,
+    deps.now().toISOString(),
+    matched.id,
+    listId,
+  );
+  if (consumed.changes === 0) {
+    return { ok: false, error: "code-used" };
   }
+
+  await ticket.value.release();
 
   return {
     ok: true,
@@ -315,6 +362,7 @@ export async function joinWithCode(
       list: listResult.value,
       guestId: matched.id,
       guestName: matched.name,
+      code: matched.code,
     },
   };
 }

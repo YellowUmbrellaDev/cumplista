@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSqliteSql, type SqliteSql } from "../src/adapters/sqlite.js";
-import { createApp } from "../src/app.js";
+import { createApp, MAX_FORM_BYTES, parseSafeBack } from "../src/app.js";
 import type { Deps, Env, Mail, Mailer } from "../src/ports.js";
 
 const APP_URL = "http://localhost:8787";
@@ -102,6 +104,7 @@ describe("Cumplista CORE slice", () => {
       mailer,
       env: TEST_ENV,
       now: () => currentNow,
+      clientIp: (req) => req.headers.get("x-test-client-ip") ?? "198.51.100.1",
     };
 
     app = createApp(() => deps);
@@ -445,8 +448,19 @@ describe("Cumplista CORE slice", () => {
       { name: "Diego", email: "diego@example.com" },
       { jar: ownerJar },
     );
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: "Lucia", email: "lucia@example.com" },
+      { jar: ownerJar },
+    );
     const code = extractInviteCodeFromText(sentMails[0]?.text ?? "");
-    const wrongCode = code === "0000" ? "9999" : "0000";
+    const secondCode = extractInviteCodeFromText(sentMails[1]?.text ?? "");
+    const wrongCode =
+      code !== "0000" && secondCode !== "0000"
+        ? "0000"
+        : code !== "9999" && secondCode !== "9999"
+          ? "9999"
+          : "8888";
 
     const joinGet = await getPage(`/l/${listId}`);
     expect(joinGet.status).toBe(200);
@@ -455,7 +469,12 @@ describe("Cumplista CORE slice", () => {
       const wrongRes = await postForm(
         `/l/${listId}/join`,
         { code: wrongCode },
-        { headers: { "x-forwarded-for": "203.0.113.10" } },
+        {
+          headers: {
+            "x-test-client-ip": "203.0.113.10",
+            "x-forwarded-for": `198.51.100.${i + 1}`,
+          },
+        },
       );
       expect(wrongRes.status).toBe(401);
       expect(await wrongRes.text()).toContain("That code does not match.");
@@ -464,7 +483,12 @@ describe("Cumplista CORE slice", () => {
     const throttledRes = await postForm(
       `/l/${listId}/join`,
       { code },
-      { headers: { "x-forwarded-for": "203.0.113.10" } },
+      {
+        headers: {
+          "x-test-client-ip": "203.0.113.10",
+          "x-forwarded-for": "198.51.100.250",
+        },
+      },
     );
     expect(throttledRes.status).toBe(429);
     expect(await throttledRes.text()).toContain("Too many wrong codes.");
@@ -473,7 +497,7 @@ describe("Cumplista CORE slice", () => {
     const otherIpJoin = await postForm(
       `/l/${listId}/join`,
       { code },
-      { jar: otherIpJar, headers: { "x-forwarded-for": "203.0.113.99" } },
+      { jar: otherIpJar, headers: { "x-test-client-ip": "203.0.113.99" } },
     );
     expect(otherIpJoin.status).toBe(302);
     expect(otherIpJoin.headers.get("location")).toBe(`/l/${listId}/list`);
@@ -487,8 +511,8 @@ describe("Cumplista CORE slice", () => {
     const expiredWindowJar = new CookieJar();
     const afterCooldownRes = await postForm(
       `/l/${listId}/join`,
-      { code },
-      { jar: expiredWindowJar, headers: { "x-forwarded-for": "203.0.113.10" } },
+      { code: secondCode },
+      { jar: expiredWindowJar, headers: { "x-test-client-ip": "203.0.113.10" } },
     );
     expect(afterCooldownRes.status).toBe(302);
   });
@@ -870,6 +894,8 @@ describe("Cumplista CORE slice", () => {
     await postForm(`/l/${listId}/join`, { code: zoeCode }, { jar: zoeJar });
 
     const ownerHtmlBaseline = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    expect(ownerHtmlBaseline).not.toContain(`Code ${victorCode}`);
+    expect(ownerHtmlBaseline).not.toContain(`Code ${zoeCode}`);
     const [penId, organizerId] = Array.from(
       ownerHtmlBaseline.matchAll(/<li id="item-([^"]+)"/g),
       (m) => m[1] ?? "",
@@ -1019,5 +1045,448 @@ describe("Cumplista CORE slice", () => {
     const codes = Array.from(ownerHtml.matchAll(/Code (\d{4})/g), (m) => m[1] ?? "");
     expect(codes).toHaveLength(200);
     expect(new Set(codes).size).toBe(200);
+  });
+
+  it("throttles 40 concurrent wrong codes to at most 8 x 401 and the rest 429", async () => {
+    const { listId, ownerJar } = await setupAuthenticatedOwnerList();
+    sentMails.length = 0;
+
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: "Diego", email: "diego@example.com" },
+      { jar: ownerJar },
+    );
+    const validCode = extractInviteCodeFromText(sentMails[0]?.text ?? "");
+    const wrongCode = validCode === "0000" ? "9999" : "0000";
+
+    const responses = await Promise.all(
+      Array.from({ length: 40 }, () =>
+        postForm(
+          `/l/${listId}/join`,
+          { code: wrongCode },
+          { headers: { "x-test-client-ip": "203.0.113.55" } },
+        ),
+      ),
+    );
+
+    const unauthorized = responses.filter((r) => r.status === 401).length;
+    const rateLimited = responses.filter((r) => r.status === 429).length;
+    expect(unauthorized).toBe(8);
+    expect(unauthorized).toBeLessThanOrEqual(8);
+    expect(rateLimited).toBe(32);
+    expect(unauthorized + rateLimited).toBe(40);
+  });
+
+  it("releases join budget on success and enforces the 30 per 24h per-list cap across clients", async () => {
+    const { listId, ownerJar } = await setupAuthenticatedOwnerList();
+    sentMails.length = 0;
+
+    for (let i = 0; i < 10; i++) {
+      await postForm(
+        `/o/${listId}/guests`,
+        { name: `Friend ${i}`, email: `friend${i}@example.com` },
+        { jar: ownerJar },
+      );
+    }
+    expect(sentMails).toHaveLength(10);
+
+    for (let i = 0; i < 10; i++) {
+      const code = extractInviteCodeFromText(sentMails[i]?.text ?? "");
+      const res = await postForm(
+        `/l/${listId}/join`,
+        { code },
+        { headers: { "x-test-client-ip": "203.0.113.50" } },
+      );
+      expect(res.status).toBe(302);
+    }
+
+    sentMails.length = 0;
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: "FinalGuest", email: "final@example.com" },
+      { jar: ownerJar },
+    );
+    const finalCode = extractInviteCodeFromText(sentMails[0]?.text ?? "");
+    const wrongCode = "abcd";
+
+    for (const clientIp of ["203.0.113.1", "203.0.113.2", "203.0.113.3"]) {
+      for (let i = 0; i < 8; i++) {
+        const res = await postForm(
+          `/l/${listId}/join`,
+          { code: wrongCode },
+          { headers: { "x-test-client-ip": clientIp } },
+        );
+        expect(res.status).toBe(401);
+      }
+      const ninth = await postForm(
+        `/l/${listId}/join`,
+        { code: wrongCode },
+        { headers: { "x-test-client-ip": clientIp } },
+      );
+      expect(ninth.status).toBe(429);
+    }
+
+    for (let i = 0; i < 6; i++) {
+      const res = await postForm(
+        `/l/${listId}/join`,
+        { code: wrongCode },
+        { headers: { "x-test-client-ip": "203.0.113.4" } },
+      );
+      expect(res.status).toBe(401);
+    }
+
+    const listCapHitWithRightCode = await postForm(
+      `/l/${listId}/join`,
+      { code: finalCode },
+      { headers: { "x-test-client-ip": "203.0.113.99" } },
+    );
+    expect(listCapHitWithRightCode.status).toBe(429);
+
+    currentNow = new Date(currentNow.getTime() + 24 * 60 * 60 * 1000 + 1);
+    const afterDailyWindow = await postForm(
+      `/l/${listId}/join`,
+      { code: finalCode },
+      { headers: { "x-test-client-ip": "203.0.113.99" } },
+    );
+    expect(afterDailyWindow.status).toBe(302);
+  });
+
+  it("consumes invite codes atomically once, localizes code-used in en and es, and omits joined codes on owner page", async () => {
+    const { listId, ownerJar } = await setupAuthenticatedOwnerList({
+      title: "Party",
+      ownerName: "Nerea",
+      occasionDate: "",
+    });
+    sentMails.length = 0;
+
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: "JoinedGuest", email: "joined@example.com" },
+      { jar: ownerJar },
+    );
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: "PendingGuest", email: "pending@example.com" },
+      { jar: ownerJar },
+    );
+
+    const beforeJoinHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    const joinedGuestId = /<li id="guest-([^"]+)"/.exec(beforeJoinHtml)?.[1] ?? "";
+    expect(joinedGuestId).not.toBe("");
+
+    let joinedCode = extractInviteCodeFromText(sentMails[0]?.text ?? "");
+    const pendingCode = extractInviteCodeFromText(sentMails[1]?.text ?? "");
+    while (joinedCode === "1000" || joinedCode === "2048" || joinedCode === pendingCode) {
+      await postForm(`/o/${listId}/guests/${joinedGuestId}/code`, {}, { jar: ownerJar });
+      joinedCode = extractInviteCodeFromText(sentMails[sentMails.length - 1]?.text ?? "");
+    }
+
+    const preJoinOwnerHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    expect(preJoinOwnerHtml).toContain(`Code ${joinedCode}`);
+    expect(preJoinOwnerHtml).toContain(`Code ${pendingCode}`);
+
+    const [joinA, joinB] = await Promise.all([
+      postForm(
+        `/l/${listId}/join`,
+        { code: joinedCode },
+        { headers: { "x-test-client-ip": "203.0.113.61" } },
+      ),
+      postForm(
+        `/l/${listId}/join`,
+        { code: joinedCode },
+        { headers: { "x-test-client-ip": "203.0.113.62" } },
+      ),
+    ]);
+
+    const statuses = [joinA.status, joinB.status].sort((a, b) => a - b);
+    expect(statuses).toEqual([302, 401]);
+
+    const loser = joinA.status === 401 ? joinA : joinB;
+    expect(await loser.text()).toContain("That code was already used. Ask Nerea for a new one.");
+
+    const replayEs = await postForm(
+      `/l/${listId}/join`,
+      { code: joinedCode },
+      {
+        headers: {
+          "accept-language": "es-ES,es;q=0.9",
+          "x-test-client-ip": "203.0.113.63",
+        },
+      },
+    );
+    expect(replayEs.status).toBe(401);
+    expect(await replayEs.text()).toContain("Ese código ya se usó. Pídele a Nerea uno nuevo.");
+
+    const postJoinOwnerHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    expect(postJoinOwnerHtml).not.toContain(joinedCode);
+    expect(postJoinOwnerHtml).not.toContain("mailto:joined@example.com");
+    expect(postJoinOwnerHtml).toContain(`/o/${listId}/guests/${joinedGuestId}/code`);
+    expect(postJoinOwnerHtml).toContain("Joined");
+    expect(postJoinOwnerHtml).toContain(`Code ${pendingCode}`);
+  });
+
+  it("invalidates prior guest session cookies when the owner regenerates a guest code", async () => {
+    const { listId, ownerJar } = await setupAuthenticatedOwnerList();
+    sentMails.length = 0;
+
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: " Clara ", email: "clara@example.com" },
+      { jar: ownerJar },
+    );
+    const initialCode = extractInviteCodeFromText(sentMails[0]?.text ?? "");
+    const ownerHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    const claraId = /<li id="guest-([^"]+)"/.exec(ownerHtml)?.[1] ?? "";
+    expect(claraId).not.toBe("");
+
+    const claraJar = new CookieJar();
+    const firstJoin = await postForm(`/l/${listId}/join`, { code: initialCode }, { jar: claraJar });
+    expect(firstJoin.status).toBe(302);
+    expect((await getPage(`/l/${listId}/list`, { jar: claraJar })).status).toBe(200);
+
+    const regenRes = await postForm(`/o/${listId}/guests/${claraId}/code`, {}, { jar: ownerJar });
+    expect(regenRes.status).toBe(302);
+    const updatedCode = extractInviteCodeFromText(sentMails[1]?.text ?? "");
+    expect(updatedCode).not.toBe(initialCode);
+
+    const ownerAfterRegen = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    expect(ownerAfterRegen).toContain(`Code ${updatedCode}`);
+    expect(ownerAfterRegen).toContain("Not opened yet");
+
+    const staleSessionRes = await getPage(`/l/${listId}/list`, { jar: claraJar });
+    expect(staleSessionRes.status).toBe(302);
+    expect(staleSessionRes.headers.get("location")).toBe(`/l/${listId}`);
+    expect(claraJar.get(`g_${listId}`)).toBeUndefined();
+
+    const freshJar = new CookieJar();
+    const rejoinRes = await postForm(`/l/${listId}/join`, { code: updatedCode }, { jar: freshJar });
+    expect(rejoinRes.status).toBe(302);
+    expect((await getPage(`/l/${listId}/list`, { jar: freshJar })).status).toBe(200);
+  });
+
+  it("rate limits POST /lists to 5 per client per hour and guest invite emails to 30 per list per 24h", async () => {
+    for (let i = 0; i < 5; i++) {
+      const okRes = await postForm(
+        "/lists",
+        {
+          title: `List ${i}`,
+          ownerName: "Nerea",
+          ownerEmail: "nerea@example.com",
+          occasionDate: "",
+        },
+        { headers: { "x-test-client-ip": "198.51.100.77" } },
+      );
+      expect(okRes.status).toBe(200);
+    }
+
+    const sixthEn = await postForm(
+      "/lists",
+      {
+        title: "List 6",
+        ownerName: "Nerea",
+        ownerEmail: "nerea@example.com",
+        occasionDate: "",
+      },
+      { headers: { "x-test-client-ip": "198.51.100.77" } },
+    );
+    expect(sixthEn.status).toBe(429);
+    expect(await sixthEn.text()).toContain("Too many requests. Try again in a while.");
+
+    const seventhEs = await postForm(
+      "/lists",
+      {
+        title: "Lista 7",
+        ownerName: "Nerea",
+        ownerEmail: "nerea@example.com",
+        occasionDate: "",
+      },
+      {
+        headers: {
+          "x-test-client-ip": "198.51.100.77",
+          "accept-language": "es-ES,es;q=0.9",
+        },
+      },
+    );
+    expect(seventhEs.status).toBe(429);
+    expect(await seventhEs.text()).toContain(
+      "Demasiadas solicitudes. Inténtalo de nuevo más tarde.",
+    );
+
+    const ownerJar = new CookieJar();
+    const otherClientCreate = await postForm(
+      "/lists",
+      {
+        title: "Mail Cap List",
+        ownerName: "Nerea",
+        ownerEmail: "nerea@example.com",
+        occasionDate: "",
+      },
+      { jar: ownerJar, headers: { "x-test-client-ip": "198.51.100.88" } },
+    );
+    expect(otherClientCreate.status).toBe(200);
+    const managePath = extractManagePath(await otherClientCreate.text());
+    const listId = extractListIdFromManagePath(managePath);
+    await getPage(managePath, { jar: ownerJar });
+
+    sentMails.length = 0;
+    for (let i = 0; i < 30; i++) {
+      const addRes = await postForm(
+        `/o/${listId}/guests`,
+        { name: `Guest ${i}`, email: `g${i}@example.com` },
+        { jar: ownerJar },
+      );
+      expect(addRes.status).toBe(302);
+      expect(addRes.headers.get("location")).toBe(`/o/${listId}?flash=guest-added`);
+    }
+    expect(sentMails).toHaveLength(30);
+
+    const cappedAdd = await postForm(
+      `/o/${listId}/guests`,
+      { name: "Guest 30", email: "g30@example.com" },
+      { jar: ownerJar },
+    );
+    expect(cappedAdd.status).toBe(302);
+    expect(cappedAdd.headers.get("location")).toBe(`/o/${listId}?flash=mail-failed`);
+    expect(sentMails).toHaveLength(30);
+
+    const ownerHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    expect(ownerHtml).toContain("Guest 30");
+    const firstGuestId = /<li id="guest-([^"]+)"/.exec(ownerHtml)?.[1] ?? "";
+    expect(firstGuestId).not.toBe("");
+
+    const cappedRegen = await postForm(
+      `/o/${listId}/guests/${firstGuestId}/code`,
+      {},
+      { jar: ownerJar },
+    );
+    expect(cappedRegen.status).toBe(302);
+    expect(cappedRegen.headers.get("location")).toBe(`/o/${listId}?flash=mail-failed`);
+    expect(sentMails).toHaveLength(30);
+  });
+
+  it("rejects open-redirect tricks in parseSafeBack and /lang", async () => {
+    expect(parseSafeBack("/\t/evil.example")).toBe("/");
+    expect(parseSafeBack("//evil.example")).toBe("/");
+    expect(parseSafeBack("/\\evil.example")).toBe("/");
+    expect(parseSafeBack("/o/abc?x=1")).toBe("/o/abc?x=1");
+
+    for (const unsafe of ["/\t/evil.example", "//evil.example", "/\\evil.example"]) {
+      const res = await postForm("/lang", { lang: "es", back: unsafe });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("/");
+    }
+
+    const safeRes = await postForm("/lang", { lang: "es", back: "/o/abc?x=1" });
+    expect(safeRes.status).toBe(302);
+    expect(safeRes.headers.get("location")).toBe("/o/abc?x=1");
+  });
+
+  it("enforces 16 KB bodyLimit (413) across POST routes and 415 on non-urlencoded forms", async () => {
+    const oversizedBody = `title=${"a".repeat(MAX_FORM_BYTES + 128)}`;
+
+    const oversizedStreamed = await app.request("/lists", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: oversizedBody,
+    });
+    expect(oversizedStreamed.status).toBe(413);
+
+    const oversizedActionRoute = await app.request("/o/lst_1/items/itm_1/delete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "content-length": String(MAX_FORM_BYTES + 1),
+      },
+      body: "x",
+    });
+    expect(oversizedActionRoute.status).toBe(413);
+
+    const multipartData = new FormData();
+    multipartData.set("title", "Multipart List");
+    multipartData.set("ownerName", "Ana");
+    multipartData.set("ownerEmail", "ana@example.com");
+    const multipartRes = await app.request("/lists", {
+      method: "POST",
+      body: multipartData,
+    });
+    expect(multipartRes.status).toBe(415);
+
+    const jsonRes = await app.request("/lang", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lang: "es", back: "/" }),
+    });
+    expect(jsonRes.status).toBe(415);
+  });
+
+  it("strips control characters from mail subjects and escapes HTML payloads in mail bodies", async () => {
+    const { listId, ownerJar } = await setupAuthenticatedOwnerList({
+      title: "<img src=x onerror=alert(1)>",
+      ownerName: "Mallory\r\nBcc: x@y.z",
+      occasionDate: "",
+    });
+
+    expect(sentMails).toHaveLength(1);
+    const ownerMail = sentMails[0];
+    if (!ownerMail) throw new Error("Expected owner mail");
+    expect(ownerMail.subject).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(ownerMail.subject).toBe('Your gift list "<img src=x onerror=alert(1)>" is ready');
+    expect(ownerMail.html).not.toContain("<img");
+
+    await postForm(
+      `/o/${listId}/guests`,
+      { name: "Victim", email: "victim@example.com" },
+      { jar: ownerJar },
+    );
+    expect(sentMails).toHaveLength(2);
+    const guestMail = sentMails[1];
+    if (!guestMail) throw new Error("Expected guest mail");
+    expect(guestMail.subject).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(guestMail.subject).toBe("MalloryBcc: x@y.z invited you to a gift list");
+    expect(guestMail.html).not.toContain("<img");
+    expect(guestMail.html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("rejects list A guest cookies on list B and rejects guest cookies replayed as owner cookies", async () => {
+    const listA = await setupAuthenticatedOwnerList({ title: "List A" });
+    const listB = await setupAuthenticatedOwnerList({ title: "List B" });
+    sentMails.length = 0;
+
+    await postForm(
+      `/o/${listA.listId}/guests`,
+      { name: "GuestA", email: "guesta@example.com" },
+      { jar: listA.ownerJar },
+    );
+    const codeA = extractInviteCodeFromText(sentMails[0]?.text ?? "");
+
+    const guestAJar = new CookieJar();
+    expect(
+      (await postForm(`/l/${listA.listId}/join`, { code: codeA }, { jar: guestAJar })).status,
+    ).toBe(302);
+    const signedGuestCookie = guestAJar.get(`g_${listA.listId}`);
+    if (!signedGuestCookie) throw new Error("Expected signed guest cookie");
+
+    const crossListJar = new CookieJar();
+    crossListJar.set(`g_${listB.listId}`, signedGuestCookie);
+    const crossListRes = await getPage(`/l/${listB.listId}/list`, { jar: crossListJar });
+    expect(crossListRes.status).toBe(302);
+    expect(crossListRes.headers.get("location")).toBe(`/l/${listB.listId}`);
+
+    const roleReplayJar = new CookieJar();
+    roleReplayJar.set(`o_${listA.listId}`, signedGuestCookie);
+    const roleReplayRes = await getPage(`/o/${listA.listId}`, { jar: roleReplayJar });
+    expect(roleReplayRes.status).toBe(403);
+  });
+
+  it("STATIC PRIVACY INVARIANT: owner and invite domain modules contain neither claims nor side_gifts", () => {
+    for (const relPath of [
+      "../src/domain/lists.ts",
+      "../src/domain/guests.ts",
+      "../src/domain/invite.ts",
+    ]) {
+      const source = readFileSync(fileURLToPath(new URL(relPath, import.meta.url)), "utf8");
+      expect(source).not.toContain("claims");
+      expect(source).not.toContain("side_gifts");
+    }
   });
 });

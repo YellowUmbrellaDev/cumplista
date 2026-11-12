@@ -60,6 +60,7 @@ export const en = {
   "owner.days_passed": "Celebration passed",
   "owner.flash_guest_added": "Guest added. Send them their invite below.",
   "owner.flash_mail_failed": "Guest added, though the email could not be sent. Share their invite message directly below.",
+  "owner.flash_mail_throttled": "Daily invitation email limit reached for this list. Leave the email blank to share the invite yourself, or try again tomorrow.",
   "owner.checklist_heading": "Wishes",
   "owner.add_item_label": "Gift wish",
   "owner.add_item_placeholder": "Add a gift you would love...",
@@ -117,4 +118,6 @@ export const en = {
   "guest.idea_by": "From {name}",
   "guest.idea_by_you": "From {name}, your gift",
   "guest.delete_idea": "Delete {name}",
+  "error.code_used": "That code was already used. Ask {owner} for a new one.",
+  "error.rate_limited": "Too many requests. Try again in a while.",
 } satisfies Record<string, string>;

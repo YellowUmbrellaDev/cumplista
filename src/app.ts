@@ -1,5 +1,7 @@
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { HTTPException } from "hono/http-exception";
 import {
   guestCookieName,
   isSameOrigin,
@@ -27,6 +29,7 @@ import {
   updateSideGift,
 } from "./domain/ideas.js";
 import { buildShareLinks } from "./domain/invite.js";
+import { ipBucket } from "./domain/ip.js";
 import {
   addItem,
   createList,
@@ -52,10 +55,14 @@ import {
 } from "./views/pages.js";
 import type { Chrome, GuestListPage, OwnerPage, ShareLinks } from "./views/props.js";
 
+export const MAX_FORM_BYTES = 16 * 1024;
+
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const PRICE_PATTERN = /^(\d{1,7})(?:[.,](\d{1,2}))?$/;
+const UNSAFE_BACK_CHARS = /[\u0000-\u001f\u007f\\]/;
+const SAFE_BACK_ORIGIN = "http://x.invalid";
 
 const AVAILABLE_LOCALES: { code: LocaleCode; name: string }[] = [];
 for (const [code, meta] of Object.entries(LOCALES)) {
@@ -92,35 +99,26 @@ function buildChrome(c: Context, path: string): Chrome {
   };
 }
 
-async function readForm(c: Context): Promise<Record<string, unknown>> {
-  const contentType = c.req.header("content-type") ?? "";
-  if (
-    !contentType.includes("application/x-www-form-urlencoded") &&
-    !contentType.includes("multipart/form-data")
-  ) {
-    return {};
+async function readForm(c: Context): Promise<URLSearchParams> {
+  const rawType = c.req.header("content-type") ?? "";
+  const mediaType = (rawType.split(";")[0] ?? "").trim().toLowerCase();
+  if (mediaType !== "application/x-www-form-urlencoded") {
+    throw new HTTPException(415, { message: "Unsupported Media Type" });
   }
-  try {
-    return await c.req.parseBody();
-  } catch {
-    return {};
+  const buf = await c.req.arrayBuffer();
+  if (buf.byteLength > MAX_FORM_BYTES) {
+    throw new HTTPException(413, { message: "Payload Too Large" });
   }
+  return new URLSearchParams(new TextDecoder().decode(buf));
 }
 
-function formString(form: Record<string, unknown>, key: string): string {
-  const raw = form[key];
-  if (typeof raw === "string") return raw;
-  if (Array.isArray(raw)) {
-    for (let i = raw.length - 1; i >= 0; i--) {
-      const item = raw[i];
-      if (typeof item === "string") return item;
-    }
-  }
-  return "";
+function formString(form: URLSearchParams, key: string): string {
+  const values = form.getAll(key);
+  return values[values.length - 1] ?? "";
 }
 
-function hasFormField(form: Record<string, unknown>, key: string): boolean {
-  return Object.hasOwn(form, key);
+function hasFormField(form: URLSearchParams, key: string): boolean {
+  return form.has(key);
 }
 
 function parseOccasionDate(raw: string): Result<string | null, "invalid"> {
@@ -142,7 +140,7 @@ function parseOccasionDate(raw: string): Result<string | null, "invalid"> {
   return { ok: true, value: trimmed };
 }
 
-function parseCreateListForm(form: Record<string, unknown>): Result<
+function parseCreateListForm(form: URLSearchParams): Result<
   {
     title: string;
     ownerName: string;
@@ -198,7 +196,7 @@ function parseHttpUrl(raw: string): Result<string | null, "invalid"> {
   }
 }
 
-function parseItemDraftForm(form: Record<string, unknown>): Result<ItemDraft, "invalid"> {
+function parseItemDraftForm(form: URLSearchParams): Result<ItemDraft, "invalid"> {
   const name = formString(form, "name").trim();
   if (name.length < 1 || name.length > 120) return { ok: false, error: "invalid" };
 
@@ -223,7 +221,7 @@ function parseItemDraftForm(form: Record<string, unknown>): Result<ItemDraft, "i
 }
 
 function parseAddGuestForm(
-  form: Record<string, unknown>,
+  form: URLSearchParams,
 ): Result<{ name: string; email: string | null }, "invalid"> {
   const name = formString(form, "name").trim();
   if (name.length < 1 || name.length > 60) return { ok: false, error: "invalid" };
@@ -239,7 +237,7 @@ function parseAddGuestForm(
 }
 
 function parseMoveDirection(
-  form: Record<string, unknown>,
+  form: URLSearchParams,
   queryDir: string | undefined,
 ): Result<MoveDirection, "invalid"> {
   const raw = (
@@ -258,7 +256,7 @@ function parseMoveDirection(
   return { ok: false, error: "invalid" };
 }
 
-function parseReceivedMode(form: Record<string, unknown>): Result<ReceivedMode, "invalid"> {
+function parseReceivedMode(form: URLSearchParams): Result<ReceivedMode, "invalid"> {
   if (!hasFormField(form, "received")) return { ok: true, value: "toggle" };
   const raw = formString(form, "received").trim().toLowerCase();
   if (raw === "") return { ok: true, value: "toggle" };
@@ -267,12 +265,18 @@ function parseReceivedMode(form: Record<string, unknown>): Result<ReceivedMode, 
   return { ok: false, error: "invalid" };
 }
 
-function parseSafeBack(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.includes("\\")) {
-    return trimmed;
+export function parseSafeBack(raw: string): string {
+  if (!raw || UNSAFE_BACK_CHARS.test(raw)) return "/";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+  try {
+    const parsed = new URL(raw, SAFE_BACK_ORIGIN);
+    if (parsed.origin !== SAFE_BACK_ORIGIN || !parsed.pathname.startsWith("/")) {
+      return "/";
+    }
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "/";
   }
-  return "/";
 }
 
 function parseOwnerFlash(raw: string | undefined): OwnerPage["flash"] {
@@ -285,14 +289,8 @@ function parseGuestFlash(raw: string | undefined): GuestListPage["flash"] {
   return undefined;
 }
 
-function clientKey(c: Context): string {
-  const cfIp = c.req.header("cf-connecting-ip")?.trim();
-  if (cfIp) return cfIp;
-  const xff = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (xff) return xff;
-  const realIp = c.req.header("x-real-ip")?.trim();
-  if (realIp) return realIp;
-  return "local";
+function clientBucket(c: Context, deps: Deps): string {
+  return ipBucket(deps.clientIp(c.req.raw, c.env));
 }
 
 async function isAuthorizedOwner(c: Context, deps: Deps, listId: ListId): Promise<boolean> {
@@ -312,7 +310,7 @@ async function resolveAuthorizedGuest(
   if (!principal || principal.role !== "guest" || principal.listId !== listId) {
     return null;
   }
-  const guestResult = await getGuestForList(deps, listId, principal.guestId);
+  const guestResult = await getGuestForList(deps, listId, principal.guestId, principal.code);
   if (!guestResult.ok) {
     deleteCookie(c, cookieName, { path: "/" });
     return null;
@@ -332,7 +330,9 @@ async function buildOwnerPage(
   const guests = await listOwnerGuests(deps, listId);
   const shares: Record<GuestId, ShareLinks> = {};
   for (const guest of guests) {
-    shares[guest.id] = buildShareLinks(ownerView.value.list, guest, deps.env.APP_URL);
+    if (!guest.joined) {
+      shares[guest.id] = buildShareLinks(ownerView.value.list, guest, deps.env.APP_URL);
+    }
   }
 
   return {
@@ -374,6 +374,7 @@ async function buildGuestPage(
 
 export function createApp(getDeps: () => Deps): Hono {
   const app = new Hono();
+  const postBodyLimit = bodyLimit({ maxSize: MAX_FORM_BYTES });
 
   app.use("*", async (c, next) => {
     if (c.req.method !== "GET" && c.req.method !== "HEAD" && c.req.method !== "OPTIONS") {
@@ -387,7 +388,7 @@ export function createApp(getDeps: () => Deps): Hono {
 
   app.get("/healthz", (c) => c.text("ok"));
 
-  app.post("/lang", async (c) => {
+  app.post("/lang", postBodyLimit, async (c) => {
     const deps = getDeps();
     const form = await readForm(c);
     const lang = formString(form, "lang").trim();
@@ -405,7 +406,7 @@ export function createApp(getDeps: () => Deps): Hono {
 
   app.get("/", (c) => c.html(CreateListView({ chrome: buildChrome(c, "/") })));
 
-  app.post("/lists", async (c) => {
+  app.post("/lists", postBodyLimit, async (c) => {
     const deps = getDeps();
     const chrome = buildChrome(c, "/");
     const form = await readForm(c);
@@ -414,12 +415,16 @@ export function createApp(getDeps: () => Deps): Hono {
       return c.html(CreateListView({ chrome, error: "invalid" }), 400);
     }
 
-    const created = await createList(deps, {
-      ...parsed.value,
-      locale: chrome.locale,
-    });
+    const created = await createList(
+      deps,
+      {
+        ...parsed.value,
+        locale: chrome.locale,
+      },
+      clientBucket(c, deps),
+    );
     if (!created.ok) {
-      return c.html(CreateListView({ chrome, error: "invalid" }), 400);
+      return c.html(CreateListView({ chrome, error: "rate-limited" }), 429);
     }
 
     return c.html(
@@ -460,7 +465,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.html(OwnerView(page));
   });
 
-  app.post("/o/:id/items", async (c) => {
+  app.post("/o/:id/items", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     if (!listId) return c.notFound();
@@ -482,7 +487,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}`);
   });
 
-  app.post("/o/:id/items/:item", async (c) => {
+  app.post("/o/:id/items/:item", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const itemId = parseItemId(c.req.param("item"));
@@ -501,7 +506,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}#item-${itemId}`);
   });
 
-  app.post("/o/:id/items/:item/delete", async (c) => {
+  app.post("/o/:id/items/:item/delete", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const itemId = parseItemId(c.req.param("item"));
@@ -514,7 +519,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}`);
   });
 
-  app.post("/o/:id/items/:item/received", async (c) => {
+  app.post("/o/:id/items/:item/received", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const itemId = parseItemId(c.req.param("item"));
@@ -533,7 +538,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}#item-${itemId}`);
   });
 
-  app.post("/o/:id/items/:item/move", async (c) => {
+  app.post("/o/:id/items/:item/move", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const itemId = parseItemId(c.req.param("item"));
@@ -553,7 +558,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}#item-${itemId}`);
   });
 
-  app.post("/o/:id/guests", async (c) => {
+  app.post("/o/:id/guests", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     if (!listId) return c.notFound();
@@ -576,7 +581,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}?flash=${flash}`);
   });
 
-  app.post("/o/:id/guests/:g/delete", async (c) => {
+  app.post("/o/:id/guests/:g/delete", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const guestId = parseGuestId(c.req.param("g"));
@@ -589,7 +594,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/o/${listId}`);
   });
 
-  app.post("/o/:id/guests/:g/code", async (c) => {
+  app.post("/o/:id/guests/:g/code", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const guestId = parseGuestId(c.req.param("g"));
@@ -621,14 +626,14 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.html(JoinView({ chrome: buildChrome(c, `/l/${listId}`), list: listResult.value }));
   });
 
-  app.post("/l/:id/join", async (c) => {
+  app.post("/l/:id/join", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     if (!listId) return c.notFound();
 
     const form = await readForm(c);
     const code = formString(form, "code");
-    const joined = await joinWithCode(deps, listId, code, clientKey(c));
+    const joined = await joinWithCode(deps, listId, code, clientBucket(c, deps));
 
     if (!joined.ok) {
       if (joined.error === "not-found") return c.notFound();
@@ -646,7 +651,12 @@ export function createApp(getDeps: () => Deps): Hono {
     }
 
     const signed = await signPrincipal(
-      { role: "guest", listId, guestId: joined.value.guestId },
+      {
+        role: "guest",
+        listId,
+        guestId: joined.value.guestId,
+        code: joined.value.code,
+      },
       deps.env.SESSION_SECRET,
     );
     setCookie(c, guestCookieName(listId), signed, sessionCookieOptions(deps.env.APP_URL));
@@ -675,7 +685,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.html(GuestListView(page));
   });
 
-  app.post("/l/:id/items/:item/claim", async (c) => {
+  app.post("/l/:id/items/:item/claim", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const itemId = parseItemId(c.req.param("item"));
@@ -695,7 +705,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/l/${listId}/list#item-${itemId}`);
   });
 
-  app.post("/l/:id/items/:item/unclaim", async (c) => {
+  app.post("/l/:id/items/:item/unclaim", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const itemId = parseItemId(c.req.param("item"));
@@ -714,7 +724,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/l/${listId}/list#item-${itemId}`);
   });
 
-  app.post("/l/:id/ideas", async (c) => {
+  app.post("/l/:id/ideas", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     if (!listId) return c.notFound();
@@ -738,7 +748,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/l/${listId}/list#idea-${added.value.id}`);
   });
 
-  app.post("/l/:id/ideas/:idea", async (c) => {
+  app.post("/l/:id/ideas/:idea", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const ideaId = parseSideGiftId(c.req.param("idea"));
@@ -759,7 +769,7 @@ export function createApp(getDeps: () => Deps): Hono {
     return c.redirect(`/l/${listId}/list#idea-${ideaId}`);
   });
 
-  app.post("/l/:id/ideas/:idea/delete", async (c) => {
+  app.post("/l/:id/ideas/:idea/delete", postBodyLimit, async (c) => {
     const deps = getDeps();
     const listId = parseListId(c.req.param("id"));
     const ideaId = parseSideGiftId(c.req.param("idea"));

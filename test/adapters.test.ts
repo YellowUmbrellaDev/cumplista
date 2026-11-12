@@ -6,6 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createD1Sql, type D1Database, type D1PreparedStatement } from "../src/adapters/d1.js";
 import { createMailer, sendMail } from "../src/adapters/mail.js";
 import { createSqliteSql } from "../src/adapters/sqlite.js";
+import { ipBucket } from "../src/domain/ip.js";
+import { resolveNodeClientIp } from "../src/entry-node.js";
+import workerEntry, { buildWorkerEnv, resolveWorkerClientIp } from "../src/entry-worker.js";
 
 function toSqlParam(value: unknown): SQLInputValue {
   if (value === null || value === undefined) return null;
@@ -117,7 +120,7 @@ describe("Adapters", () => {
     }
   });
 
-  it("sends Resend HTTP payload and turns mail errors into false via sendMail", async () => {
+  it("sends Resend HTTP payload, strips control chars from subjects, and turns mail errors into false", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(JSON.stringify({ id: "re_123" }), { status: 200 }),
     );
@@ -133,7 +136,7 @@ describe("Adapters", () => {
 
       const ok = await sendMail(resendMailer, {
         to: "guest@example.com",
-        subject: "Invite",
+        subject: "Invite\r\nBcc: x@y.z\u0000\u007f",
         text: "Hello",
         html: "<p>Hello</p>",
       });
@@ -145,7 +148,7 @@ describe("Adapters", () => {
       expect(JSON.parse(String(calledInit?.body))).toEqual({
         from: "Cumplista <noreply@example.com>",
         to: ["guest@example.com"],
-        subject: "Invite",
+        subject: "InviteBcc: x@y.z",
         text: "Hello",
         html: "<p>Hello</p>",
       });
@@ -160,6 +163,138 @@ describe("Adapters", () => {
       expect(failed).toBe(false);
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+
+  it("normalizes IPv4, IPv4-mapped IPv6, IPv6 /64 prefixes, and missing inputs in ipBucket", () => {
+    expect(ipBucket(undefined)).toBe("unknown");
+    expect(ipBucket(null)).toBe("unknown");
+    expect(ipBucket("")).toBe("unknown");
+    expect(ipBucket("   ")).toBe("unknown");
+    expect(ipBucket("not-an-ip")).toBe("unknown");
+    expect(ipBucket("999.0.0.1")).toBe("unknown");
+
+    expect(ipBucket("203.0.113.10")).toBe("203.0.113.10");
+    expect(ipBucket("203.0.113.10:54321")).toBe("203.0.113.10");
+    expect(ipBucket("::ffff:203.0.113.10")).toBe("203.0.113.10");
+
+    expect(ipBucket("2001:db8:abcd:ef::1")).toBe("2001:0db8:abcd:00ef/64");
+    expect(ipBucket("2001:db8:abcd:ef:1111:2222:3333:4444")).toBe("2001:0db8:abcd:00ef/64");
+    expect(ipBucket("[2001:db8::1]:8443")).toBe("2001:0db8:0000:0000/64");
+    expect(ipBucket("fe80::1%eth0")).toBe("fe80:0000:0000:0000/64");
+    expect(ipBucket("::1")).toBe("0000:0000:0000:0000/64");
+  });
+
+  it("resolves client IPs per runtime without trusting forged forwarded headers by default", () => {
+    const forgedReq = new Request("https://gifts.example.com/l/abc/join", {
+      headers: {
+        "cf-connecting-ip": "198.51.100.25",
+        "x-forwarded-for": "192.0.2.1, 203.0.113.77",
+      },
+    });
+
+    expect(resolveWorkerClientIp(forgedReq)).toBe("198.51.100.25");
+    expect(
+      resolveWorkerClientIp(
+        new Request("https://gifts.example.com/l/abc/join", {
+          headers: { "x-forwarded-for": "192.0.2.1" },
+        }),
+      ),
+    ).toBe("");
+
+    const nodeRuntime = {
+      incoming: {
+        socket: {
+          remoteAddress: "::ffff:198.51.100.42",
+        },
+      },
+    };
+    expect(resolveNodeClientIp(forgedReq, nodeRuntime, false)).toBe("::ffff:198.51.100.42");
+    expect(resolveNodeClientIp(forgedReq, nodeRuntime, true)).toBe("203.0.113.77");
+
+    const plainReq = new Request("http://localhost:8787/l/abc/join");
+    expect(resolveNodeClientIp(plainReq, { server: nodeRuntime }, true)).toBe(
+      "::ffff:198.51.100.42",
+    );
+  });
+
+  it("fails closed in buildWorkerEnv when required Worker bindings are missing or unsafe", () => {
+    const validProd = {
+      APP_URL: "https://gifts.example.com",
+      SESSION_SECRET: "prod-session-secret-value",
+      MAIL_DRIVER: "resend",
+      MAIL_FROM: "Cumplista <noreply@gifts.example.com>",
+      RESEND_API_KEY: "re_live_key",
+    };
+
+    expect(buildWorkerEnv(validProd)).toEqual({
+      APP_URL: "https://gifts.example.com",
+      SESSION_SECRET: "prod-session-secret-value",
+      MAIL_DRIVER: "resend",
+      MAIL_FROM: "Cumplista <noreply@gifts.example.com>",
+      RESEND_API_KEY: "re_live_key",
+    });
+
+    const { SESSION_SECRET: _missingSecret, ...noSecret } = validProd;
+    expect(() => buildWorkerEnv(noSecret)).toThrow(/SESSION_SECRET/);
+
+    const { APP_URL: _missingUrl, ...noUrl } = validProd;
+    expect(() => buildWorkerEnv(noUrl)).toThrow(/APP_URL/);
+    expect(() => buildWorkerEnv({ ...validProd, APP_URL: "http://localhost:8787" })).toThrow(
+      /Loopback APP_URL/,
+    );
+    expect(() => buildWorkerEnv({ ...validProd, APP_URL: "http://127.0.0.1:8787" })).toThrow(
+      /Loopback APP_URL/,
+    );
+
+    const { MAIL_DRIVER: _missingDriver, ...noDriver } = validProd;
+    expect(() => buildWorkerEnv(noDriver)).toThrow(/MAIL_DRIVER/);
+    expect(() => buildWorkerEnv({ ...validProd, MAIL_DRIVER: "invalid" })).toThrow(/MAIL_DRIVER/);
+    expect(() => buildWorkerEnv({ ...validProd, MAIL_DRIVER: "smtp" })).toThrow(/smtp/);
+    expect(() => buildWorkerEnv({ ...validProd, MAIL_DRIVER: "console" })).toThrow(
+      /ALLOW_CONSOLE_MAIL/,
+    );
+
+    const { MAIL_FROM: _missingFrom, ...noFrom } = validProd;
+    expect(() => buildWorkerEnv(noFrom)).toThrow(/MAIL_FROM/);
+
+    const { RESEND_API_KEY: _missingResend, ...noResendKey } = validProd;
+    expect(() => buildWorkerEnv(noResendKey)).toThrow(/RESEND_API_KEY/);
+
+    expect(
+      buildWorkerEnv({
+        APP_URL: "http://localhost:8787",
+        MAIL_DRIVER: "console",
+        ALLOW_CONSOLE_MAIL: "1",
+        SESSION_SECRET: "dev-only-change-me",
+      }),
+    ).toEqual({
+      APP_URL: "http://localhost:8787",
+      MAIL_DRIVER: "console",
+      MAIL_FROM: "Cumplista <hola@localhost>",
+      SESSION_SECRET: "dev-only-change-me",
+    });
+  });
+
+  it("handles Worker fetch requests when configured and rejects missing Worker config", async () => {
+    const { d1, close } = fakeD1OverSqlite();
+    try {
+      await expect(
+        workerEntry.fetch(new Request("https://gifts.example.com/healthz"), { DB: d1 }),
+      ).rejects.toThrow(/SESSION_SECRET/);
+
+      const okRes = await workerEntry.fetch(new Request("https://gifts.example.com/healthz"), {
+        DB: d1,
+        APP_URL: "https://gifts.example.com",
+        SESSION_SECRET: "prod-session-secret-value",
+        MAIL_DRIVER: "resend",
+        MAIL_FROM: "Cumplista <noreply@gifts.example.com>",
+        RESEND_API_KEY: "re_live_key",
+      });
+      expect(okRes.status).toBe(200);
+      expect(await okRes.text()).toBe("ok");
+    } finally {
+      close();
     }
   });
 });

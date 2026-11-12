@@ -46,13 +46,11 @@ export type OwnerGuest = {
   id: GuestId;
   name: string;
   email: string | null;
-  code: InviteCode;
-  joined: boolean;
-};
+} & ({ joined: false; code: InviteCode } | { joined: true; code: null });
 
 export type Principal =
   | { role: "owner"; listId: ListId }
-  | { role: "guest"; listId: ListId; guestId: GuestId };
+  | { role: "guest"; listId: ListId; guestId: GuestId; code: InviteCode };
 
 export type Result<T, E extends string> =
   | { ok: true; value: T }

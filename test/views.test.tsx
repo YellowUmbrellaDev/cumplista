@@ -128,6 +128,16 @@ describe("views HTML output", () => {
     expect(esHtml).toContain("Haz tu lista de cumpleaños sin arruinar la sorpresa");
     expect(esHtml).toContain("Revisa los campos marcados e inténtalo de nuevo.");
     expect(esHtml).toContain("Crear lista de regalos");
+
+    const rateEnHtml = String(
+      (<CreateListView chrome={makeChrome("en", "/")} error="rate-limited" />).toString(),
+    );
+    expect(rateEnHtml).toContain("Too many requests. Try again in a while.");
+
+    const rateEsHtml = String(
+      (<CreateListView chrome={makeChrome("es", "/")} error="rate-limited" />).toString(),
+    );
+    expect(rateEsHtml).toContain("Demasiadas solicitudes. Inténtalo de nuevo más tarde.");
   });
 
   it("iterates chrome.locales dynamically in the footer switcher", () => {
@@ -183,8 +193,9 @@ describe("views HTML output", () => {
     expect(unsentEsHtml).toContain("Abrir mi lista");
   });
 
-  it("renders OwnerView with item CRUD, share links, and zero claim or idea markers", () => {
+  it("renders OwnerView with item CRUD, share links only for unjoined guests, and zero claim or idea markers", () => {
     const g1 = guestId("gst_1");
+    const g2 = guestId("gst_2");
     const inviteText =
       'Marta invited you to their birthday gift list "Marta\'s 30th". Open https://cumplista.example/l/lst_1 and enter code 4829.';
     const encodedInvite = encodeURIComponent(inviteText);
@@ -233,6 +244,13 @@ describe("views HTML output", () => {
               name: "Carlos",
               email: "carlos@example.com",
               code: inviteCode("4829"),
+              joined: false,
+            },
+            {
+              id: g2,
+              name: "Lucia",
+              email: "lucia@example.com",
+              code: null,
               joined: true,
             },
           ]}
@@ -251,8 +269,12 @@ describe("views HTML output", () => {
     expect(ownerHtml).toContain('action="/o/lst_1/guests"');
     expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_1/code"');
     expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_1/delete"');
+    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_2/code"');
+    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_2/delete"');
     expect(ownerHtml).toContain("Code 4829");
+    expect(ownerHtml).toContain("Not opened yet");
     expect(ownerHtml).toContain("Joined");
+    expect(ownerHtml).not.toContain("mailto:lucia@example.com");
     const htmlEncodedInvite = encodedInvite.replaceAll("'", "&#39;");
     expect(ownerHtml).toContain(`https://wa.me/?text=${htmlEncodedInvite}`);
     expect(ownerHtml).toContain(
@@ -319,6 +341,28 @@ describe("views HTML output", () => {
       ).toString(),
     );
     expect(throttledEs).toContain("Demasiados códigos incorrectos. Inténtalo de nuevo en unos minutos.");
+
+    const usedEn = String(
+      (
+        <JoinView
+          chrome={makeChrome("en", "/l/lst_1")}
+          list={sampleListEn}
+          error="code-used"
+        />
+      ).toString(),
+    );
+    expect(usedEn).toContain("That code was already used. Ask Marta for a new one.");
+
+    const usedEs = String(
+      (
+        <JoinView
+          chrome={makeChrome("es", "/l/lst_1")}
+          list={sampleListEs}
+          error="code-used"
+        />
+      ).toString(),
+    );
+    expect(usedEs).toContain("Ese código ya se usó. Pídele a Marta uno nuevo.");
   });
 
   it("renders GuestListView states, hidden accessible wrapped label, received state, and guest ideas", () => {

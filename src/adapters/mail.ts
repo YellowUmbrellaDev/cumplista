@@ -21,11 +21,21 @@ function hasCreateTransport(
   );
 }
 
+const SUBJECT_CONTROL_CHARS = /[\u0000-\u001f\u007f]+/g;
+
+function sanitizeMail(mail: Mail): Mail {
+  return {
+    ...mail,
+    subject: mail.subject.replace(SUBJECT_CONTROL_CHARS, ""),
+  };
+}
+
 export function createMailer(env: Env): Mailer {
   let smtpTransporter: Promise<SmtpTransporter> | null = null;
 
   return {
-    async send(mail: Mail): Promise<void> {
+    async send(rawMail: Mail): Promise<void> {
+      const mail = sanitizeMail(rawMail);
       switch (env.MAIL_DRIVER) {
         case "console": {
           console.info(
@@ -97,7 +107,7 @@ export function createMailer(env: Env): Mailer {
 
 export async function sendMail(mailer: Mailer, mail: Mail): Promise<boolean> {
   try {
-    await mailer.send(mail);
+    await mailer.send(sanitizeMail(mail));
     return true;
   } catch {
     return false;

@@ -1,0 +1,67 @@
+# Cumplista
+
+Cumplista runs birthday gift lists where guests coordinate without accounts and without spoiling the surprise for the list owner. The same Hono server-rendered application runs on Node 24 with `node:sqlite` and on Cloudflare Workers with D1.
+
+## Privacy model
+
+- Owner services read only `lists`, `items`, and `guests`, and never query `claims` or `side_gifts`.
+- Guests see who claimed each wish and can post off-list gifts in a separate section that the owner never sees.
+- Marking a wish as received sets `items.received_at` without revealing which guest claimed it.
+- Each 4-digit guest code works once, disappears from the owner page after the guest joins, and binds that guest's session cookie.
+- Because the owner issues codes, an owner who keeps an unused code or clicks **New code** could join as that guest, though issuing a new code invalidates the guest's session and resets their joined badge.
+
+## Run on Node
+
+Requires Node 24 or newer.
+
+```sh
+npm install
+SESSION_SECRET="$(openssl rand -base64 32)" APP_URL="http://localhost:8787" npm start
+```
+
+For local development with file watching, run `npm run dev:node`.
+
+The Node entry point reads these environment variables.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SESSION_SECRET` | When `NODE_ENV=production` | Dev fallback with warning | HMAC-SHA256 secret for owner and guest cookies |
+| `APP_URL` | No | `http://localhost:<PORT>` | Public origin used in invite links, `Origin` checks, and `Secure` cookies |
+| `PORT` | No | `8787` | HTTP listen port |
+| `DATA_DIR` | No | `./data` | Directory or `.db` file path for SQLite, or `:memory:` |
+| `TRUST_PROXY` | No | `0` | Set to `1` behind a trusted reverse proxy to read the last `X-Forwarded-For` entry instead of the socket address |
+| `MAIL_DRIVER` | No | `console` | Outbound mail transport, one of `console`, `resend`, or `smtp` |
+| `MAIL_FROM` | No | `Cumplista <hola@localhost>` | Sender address for outgoing mail |
+| `RESEND_API_KEY` | When `MAIL_DRIVER=resend` | None | API key for the Resend HTTP API |
+| `SMTP_URL` | When `MAIL_DRIVER=smtp` | None | Connection URL passed to Nodemailer |
+
+## Deploy on Cloudflare Workers
+
+`wrangler.jsonc` ships with no runtime defaults so a misconfigured Worker fails closed. For local Worker development, copy `.dev.vars.example` first.
+
+```sh
+cp .dev.vars.example .dev.vars
+npm run db:local
+npm run dev
+```
+
+Follow these steps to deploy to Cloudflare.
+
+1. Run `npx wrangler d1 create cumplista` and set `d1_databases[0].database_id` in `wrangler.jsonc`.
+2. Add a `vars` object in `wrangler.jsonc` with your public `https://` `APP_URL`, `MAIL_DRIVER` set to `"resend"`, and `MAIL_FROM`. `buildWorkerEnv` throws if `SESSION_SECRET`, `APP_URL`, `MAIL_DRIVER`, or `MAIL_FROM` is missing, if `APP_URL` uses a loopback host, if `MAIL_DRIVER` is `smtp`, or if `MAIL_DRIVER` is `console` without `ALLOW_CONSOLE_MAIL=1`.
+3. Apply migrations with `npx wrangler d1 migrations apply cumplista --remote`.
+4. Set secrets with `npx wrangler secret put SESSION_SECRET` and `npx wrangler secret put RESEND_API_KEY`.
+5. Run `npm run deploy`. Workers read client IPs only from `CF-Connecting-IP`.
+
+## Add a language
+
+1. Copy `src/i18n/locales/es.ts` to `src/i18n/locales/<code>.ts` and translate every key in `Messages`. `tsc` fails if any key from `src/i18n/locales/en.ts` is missing or extra.
+2. Import the locale in `src/i18n/index.ts` and register it in `LOCALES`. The footer language switcher and `Accept-Language` header negotiation read directly from `LOCALES`.
+3. Update `formatMoney` in `src/views/components.tsx` if the locale should display a currency other than `EUR`.
+
+## Verify
+
+```sh
+npm run typecheck
+npm test
+```
