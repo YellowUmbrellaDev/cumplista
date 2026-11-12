@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import {
   guestCookieName,
+  isInviteToken,
   isSameOrigin,
   ownerCookieName,
   parseGuestId,
@@ -61,7 +62,8 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const PRICE_PATTERN = /^(\d{1,7})(?:[.,](\d{1,2}))?$/;
-const SAFE_BACK_PATTERN = /^(?:\/|\/(?:o|l)\/[A-Za-z0-9_-]+(?:\/list)?)(?:\?flash=[a-z-]+)?$/;
+const SAFE_BACK_PATTERN =
+  /^(?:\/|\/(?:o|l)\/[A-Za-z0-9_-]+(?:\/list)?)(?:\?(?:flash=[a-z-]+|i=[A-Za-z0-9_-]{22,64}))?$/;
 
 const AVAILABLE_LOCALES: { code: LocaleCode; name: string }[] = [];
 for (const [code, meta] of Object.entries(LOCALES)) {
@@ -622,7 +624,7 @@ export function createApp(getDeps: () => Deps): Hono {
 
     return c.html(
       JoinView({
-        chrome: buildChrome(c, `/l/${listId}`),
+        chrome: buildChrome(c, invite && isInviteToken(invite) ? `/l/${listId}?i=${invite}` : `/l/${listId}`),
         list: listResult.value,
         invite,
       }),

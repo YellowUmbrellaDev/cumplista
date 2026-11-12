@@ -500,7 +500,13 @@ describe("Cumplista CORE slice", () => {
 
     const joinGet = await getPage(`/l/${listId}?i=${diego.invite}`);
     expect(joinGet.status).toBe(200);
-    expect(await joinGet.text()).toContain(`name="invite" value="${diego.invite}"`);
+    const joinHtml = await joinGet.text();
+    expect(joinHtml).toContain(`name="invite" value="${diego.invite}"`);
+    const backMatch = /name="back" value="([^"]+)"/.exec(joinHtml);
+    expect(backMatch?.[1]).toBe(`/l/${listId}?i=${diego.invite}`);
+
+    const langSwitch = await postForm("/lang", { lang: "es", back: backMatch![1]!.replaceAll("&amp;", "&") });
+    expect(langSwitch.headers.get("location")).toBe(`/l/${listId}?i=${diego.invite}`);
 
     const crossGuestJoin = await postForm(
       `/l/${listId}/join`,
