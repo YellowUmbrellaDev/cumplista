@@ -57,6 +57,8 @@ export type Principal =
   | { role: "owner"; listId: ListId }
   | { role: "guest"; listId: ListId; guestId: GuestId; sessionNonce: SessionNonce };
 
+export type MailOutcome = "sent" | "failed" | "capped";
+
 export type Result<T, E extends string> =
   | { ok: true; value: T }
   | { ok: false; error: E };

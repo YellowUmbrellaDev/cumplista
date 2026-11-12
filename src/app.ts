@@ -44,7 +44,7 @@ import {
   type MoveDirection,
   type ReceivedMode,
 } from "./domain/lists.js";
-import type { GuestId, ItemDraft, ListId, Result } from "./domain/types.js";
+import type { GuestId, ItemDraft, ListId, MailOutcome, Result } from "./domain/types.js";
 import { isLocale, LOCALES, pickLocale, translator, type LocaleCode } from "./i18n/index.js";
 import type { Deps } from "./ports.js";
 import {
@@ -275,8 +275,13 @@ function joinChrome(c: Context, listId: ListId, invite: string | null): Chrome {
   return buildChrome(c, path);
 }
 
+function addGuestFlash(mail: MailOutcome): "guest-added" | "mail-failed" | "mail-capped" {
+  if (mail === "capped") return "mail-capped";
+  return mail === "failed" ? "mail-failed" : "guest-added";
+}
+
 function parseOwnerFlash(raw: string | undefined): OwnerPage["flash"] {
-  if (raw === "guest-added" || raw === "mail-failed" || raw === "invalid") return raw;
+  if (raw === "guest-added" || raw === "mail-failed" || raw === "mail-capped" || raw === "regen-mail-failed" || raw === "invalid") return raw;
   return undefined;
 }
 
@@ -578,8 +583,7 @@ export function createApp(getDeps: () => Deps): Hono {
       return page ? c.html(OwnerView(page), 400) : c.notFound();
     }
 
-    const flash = added.value.emailSent ? "guest-added" : "mail-failed";
-    return c.redirect(`/o/${listId}?flash=${flash}`);
+    return c.redirect(`/o/${listId}?flash=${addGuestFlash(added.value.mail)}`);
   });
 
   app.post("/o/:id/guests/:g/delete", postBodyLimit, async (c) => {
@@ -605,9 +609,8 @@ export function createApp(getDeps: () => Deps): Hono {
     const regenerated = await regenerateGuestCode(deps, listId, guestId);
     if (!regenerated.ok) return c.notFound();
 
-    if (!regenerated.value.emailSent) {
-      return c.redirect(`/o/${listId}?flash=mail-failed`);
-    }
+    if (regenerated.value.mail === "capped") return c.redirect(`/o/${listId}?flash=mail-capped`);
+    if (regenerated.value.mail === "failed") return c.redirect(`/o/${listId}?flash=regen-mail-failed`);
     return c.redirect(`/o/${listId}#guest-${guestId}`);
   });
 

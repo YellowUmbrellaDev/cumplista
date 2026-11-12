@@ -1481,7 +1481,7 @@ describe("Cumplista CORE slice", () => {
       { jar: ownerJar },
     );
     expect(cappedAdd.status).toBe(302);
-    expect(cappedAdd.headers.get("location")).toBe(`/o/${listId}?flash=mail-failed`);
+    expect(cappedAdd.headers.get("location")).toBe(`/o/${listId}?flash=mail-capped`);
     expect(sentMails).toHaveLength(30);
 
     const ownerHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
@@ -1495,11 +1495,31 @@ describe("Cumplista CORE slice", () => {
       { jar: ownerJar },
     );
     expect(cappedRegen.status).toBe(302);
-    expect(cappedRegen.headers.get("location")).toBe(`/o/${listId}?flash=mail-failed`);
+    expect(cappedRegen.headers.get("location")).toBe(`/o/${listId}?flash=mail-capped`);
     expect(sentMails).toHaveLength(30);
   });
 
-  it("caps POST /lists at 3 per recipient email per day, /48 IPv6 per client, and 60 per hour globally", async () => {
+  it("reports an outage on code regeneration as new-code-issued, not guest-added", async () => {
+    const ownerJar = new CookieJar();
+    const { listId } = await setupAuthenticatedOwnerList({ title: "Outage", ownerName: "Ana" }, ownerJar);
+    await postForm(`/o/${listId}/guests`, { name: "Beto", email: "beto@example.com" }, { jar: ownerJar });
+    const ownerHtml = await (await getPage(`/o/${listId}`, { jar: ownerJar })).text();
+    const guestId = /<li id="guest-([^"]+)"/.exec(ownerHtml)?.[1] ?? "";
+    expect(guestId).not.toBe("");
+
+    shouldFailMail = true;
+    const regen = await postForm(`/o/${listId}/guests/${guestId}/code`, {}, { jar: ownerJar });
+    expect(regen.headers.get("location")).toBe(`/o/${listId}?flash=regen-mail-failed`);
+
+    const flashHtml = await (await getPage(`/o/${listId}?flash=regen-mail-failed`, { jar: ownerJar })).text();
+    expect(flashHtml).toContain("New code issued, though the email could not be sent.");
+    expect(flashHtml).not.toContain("Guest added");
+
+    const add = await postForm(`/o/${listId}/guests`, { name: "Cleo", email: "cleo@example.com" }, { jar: ownerJar });
+    expect(add.headers.get("location")).toBe(`/o/${listId}?flash=mail-failed`);
+  });
+
+  it("caps POST /lists at 3 per recipient email per day and 5 per /48 IPv6 per client, with no site-wide cap", async () => {
     for (let i = 0; i < 3; i++) {
       const res = await postForm(
         "/lists",
@@ -1561,13 +1581,13 @@ describe("Cumplista CORE slice", () => {
       "Demasiadas solicitudes. Inténtalo de nuevo más tarde.",
     );
 
-    for (let i = 8; i < 60; i++) {
+    for (let i = 8; i < 80; i++) {
       const oct3 = Math.floor(i / 200);
       const oct4 = (i % 200) + 1;
       const res = await postForm(
         "/lists",
         {
-          title: `Global ${i}`,
+          title: `Many clients ${i}`,
           ownerName: "Creator",
           ownerEmail: `creator-${i}@example.com`,
           occasionDate: "",
@@ -1577,31 +1597,17 @@ describe("Cumplista CORE slice", () => {
       expect(res.status).toBe(200);
     }
 
-    const globalCapRes = await postForm(
+    const freshClientAfterManyCreations = await postForm(
       "/lists",
       {
-        title: "Global 61",
+        title: "Real user",
         ownerName: "Creator",
-        ownerEmail: "creator-61@example.com",
+        ownerEmail: "real-user@example.com",
         occasionDate: "",
       },
       { headers: { "x-test-client-ip": "10.99.99.99" } },
     );
-    expect(globalCapRes.status).toBe(429);
-    expect(await globalCapRes.text()).toContain("Too many requests. Try again in a while.");
-
-    currentNow = new Date(currentNow.getTime() + 60 * 60 * 1000 + 1);
-    const afterHourFreshEmail = await postForm(
-      "/lists",
-      {
-        title: "After 1h",
-        ownerName: "Creator",
-        ownerEmail: "creator-61@example.com",
-        occasionDate: "",
-      },
-      { headers: { "x-test-client-ip": "10.99.99.99" } },
-    );
-    expect(afterHourFreshEmail.status).toBe(200);
+    expect(freshClientAfterManyCreations.status).toBe(200);
 
     const stillEmailCappedWithin24h = await postForm(
       "/lists",
@@ -1615,7 +1621,7 @@ describe("Cumplista CORE slice", () => {
     );
     expect(stillEmailCappedWithin24h.status).toBe(429);
 
-    currentNow = new Date(currentNow.getTime() + 23 * 60 * 60 * 1000 + 1);
+    currentNow = new Date(currentNow.getTime() + 24 * 60 * 60 * 1000 + 1);
     const afterDayEmail = await postForm(
       "/lists",
       {

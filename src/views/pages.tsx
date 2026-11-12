@@ -178,6 +178,18 @@ function renderOwnerFlash(flash: OwnerPage["flash"], t: Translate) {
           {t("owner.flash_mail_failed")}
         </div>
       );
+    case "mail-capped":
+      return (
+        <div class="flash flash-warn" role="alert">
+          {t("owner.flash_mail_throttled")}
+        </div>
+      );
+    case "regen-mail-failed":
+      return (
+        <div class="flash flash-warn" role="alert">
+          {t("owner.flash_regen_mail_failed")}
+        </div>
+      );
     case "invalid":
       return (
         <div class="flash flash-err" role="alert">

@@ -60,6 +60,7 @@ export const es: Messages = {
   "owner.days_passed": "Fecha pasada",
   "owner.flash_guest_added": "Invitado añadido. Envíale su invitación desde abajo.",
   "owner.flash_mail_failed": "Invitado añadido, aunque no se pudo enviar el correo. Comparte su invitación directamente desde abajo.",
+  "owner.flash_regen_mail_failed": "Código nuevo creado, aunque no se pudo enviar el correo. Comparte el mensaje de invitación directamente desde abajo.",
   "owner.flash_mail_throttled": "Se alcanzó el límite diario de correos de invitación en esta lista. Deja el correo vacío para compartir la invitación tú mismo o inténtalo mañana.",
   "owner.checklist_heading": "Deseos",
   "owner.add_item_label": "Regalo deseado",

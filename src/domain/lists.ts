@@ -23,7 +23,6 @@ import type {
 
 export const MAX_ITEMS_PER_LIST = 500;
 export const LIST_CREATE_HOURLY_LIMIT = 5;
-export const LIST_CREATE_GLOBAL_HOURLY_LIMIT = 60;
 export const LIST_CREATE_EMAIL_DAILY_LIMIT = 3;
 export const HOUR_MS = 60 * 60 * 1000;
 
@@ -127,13 +126,6 @@ export async function createList(
         client: null,
         limit: LIST_CREATE_EMAIL_DAILY_LIMIT,
         windowMs: DAY_MS,
-      },
-      {
-        kind: "list-create",
-        scope: null,
-        client: null,
-        limit: LIST_CREATE_GLOBAL_HOURLY_LIMIT,
-        windowMs: HOUR_MS,
       },
     ],
   );

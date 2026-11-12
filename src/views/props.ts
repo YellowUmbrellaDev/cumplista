@@ -20,7 +20,7 @@ export type OwnerPage = {
   totalCents: number;
   daysLeft: number | null;
   shares: Record<GuestId, ShareLinks>;
-  flash?: "guest-added" | "mail-failed" | "invalid" | undefined;
+  flash?: "guest-added" | "mail-failed" | "mail-capped" | "regen-mail-failed" | "invalid" | undefined;
 };
 export type JoinPage = {
   chrome: Chrome;

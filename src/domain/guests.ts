@@ -15,6 +15,7 @@ import { composeGuestInviteMail } from "./invite.js";
 import { getList } from "./lists.js";
 import { DAY_MS, take, type RateRule } from "./rate.js";
 import type {
+  MailOutcome,
   GuestId,
   InviteCode,
   InviteToken,
@@ -89,7 +90,7 @@ async function sendGuestInviteIfAllowed(
   deps: Deps,
   list: ListRecord,
   guest: { email: string; code: InviteCode; inviteToken: InviteToken },
-): Promise<boolean> {
+): Promise<MailOutcome> {
   const nowMs = deps.now().getTime();
   const ticket = await take(
     deps,
@@ -104,11 +105,9 @@ async function sendGuestInviteIfAllowed(
       },
     ],
   );
-  if (!ticket.ok) {
-    return false;
-  }
+  if (!ticket.ok) return "capped";
   const mail = composeGuestInviteMail(list, guest, deps.env.APP_URL);
-  return sendMail(deps.mailer, mail);
+  return (await sendMail(deps.mailer, mail)) ? "sent" : "failed";
 }
 
 export async function listOwnerGuests(deps: Deps, listId: ListId): Promise<OwnerGuest[]> {
@@ -131,7 +130,7 @@ export async function addGuest(
   deps: Deps,
   listId: ListId,
   input: AddGuestInput,
-): Promise<Result<{ guest: OwnerGuest; emailSent: boolean }, "not-found" | "cap-reached">> {
+): Promise<Result<{ guest: OwnerGuest; mail: MailOutcome }, "not-found" | "cap-reached">> {
   const listResult = await getList(deps, listId);
   if (!listResult.ok) return listResult;
 
@@ -191,16 +190,16 @@ export async function addGuest(
     joined: false,
   };
 
-  let emailSent = true;
+  let mail: MailOutcome = "sent";
   if (input.email !== null) {
-    emailSent = await sendGuestInviteIfAllowed(deps, listResult.value, {
+    mail = await sendGuestInviteIfAllowed(deps, listResult.value, {
       email: input.email,
       code: chosenCode,
       inviteToken: chosenToken,
     });
   }
 
-  return { ok: true, value: { guest, emailSent } };
+  return { ok: true, value: { guest, mail } };
 }
 
 export async function removeGuest(
@@ -221,7 +220,7 @@ export async function regenerateGuestCode(
   deps: Deps,
   listId: ListId,
   guestId: GuestId,
-): Promise<Result<{ guest: OwnerGuest; emailSent: boolean }, "not-found">> {
+): Promise<Result<{ guest: OwnerGuest; mail: MailOutcome }, "not-found">> {
   const listResult = await getList(deps, listId);
   if (!listResult.ok) return listResult;
 
@@ -285,16 +284,16 @@ export async function regenerateGuestCode(
     inviteToken: guestRow.invite_token,
   };
 
-  let emailSent = true;
+  let mail: MailOutcome = "sent";
   if (updated.email !== null) {
-    emailSent = await sendGuestInviteIfAllowed(deps, listResult.value, {
+    mail = await sendGuestInviteIfAllowed(deps, listResult.value, {
       email: updated.email,
       code: nextCode,
       inviteToken: guestRow.invite_token,
     });
   }
 
-  return { ok: true, value: { guest: updated, emailSent } };
+  return { ok: true, value: { guest: updated, mail } };
 }
 
 export async function getGuestForList(

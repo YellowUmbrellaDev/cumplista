@@ -54,6 +54,13 @@ Follow these steps to deploy to Cloudflare.
 4. Set secrets with `npx wrangler secret put SESSION_SECRET` and `npx wrangler secret put RESEND_API_KEY`.
 5. Run `npm run deploy`. Workers read client IPs only from `CF-Connecting-IP`.
 
+## Known limits
+
+- The owner issues the invite links and codes, so an owner who invents a guest can join as that guest and read claims. This is visible to the other guests, who see who has joined.
+- Owner links do not expire.
+- List creation is limited per client (5 per hour, IPv6 grouped by /48) and per owner email (3 per day). There is no site-wide cap, because a cap shared by everyone lets a few addresses block every real user. A determined attacker with many addresses can still send owner emails, so put a CAPTCHA such as Turnstile in front of `POST /lists` if you host this publicly.
+- The item and idea caps are checked before the insert, so simultaneous requests can exceed them by a few rows.
+
 ## Add a language
 
 1. Copy `src/i18n/locales/es.ts` to `src/i18n/locales/<code>.ts` and translate every key in `Messages`. `tsc` fails if any key from `src/i18n/locales/en.ts` is missing or extra.
