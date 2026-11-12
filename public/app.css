@@ -1133,7 +1133,8 @@ textarea:hover {
 }
 
 @media (max-width: 30rem) {
-  .checklist-main {
+  .checklist-main,
+  .idea-main {
     flex-wrap: wrap;
   }
 
@@ -1141,6 +1142,10 @@ textarea:hover {
     width: 100%;
     justify-content: flex-start;
     padding-left: 3.25rem;
+  }
+
+  .idea-main .row-controls {
+    padding-left: 0;
   }
 }
 
