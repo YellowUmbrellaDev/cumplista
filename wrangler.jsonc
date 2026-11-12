@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cumplista",
+  "main": "src/entry-worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "cumplista", "database_id": "REPLACE_WITH_wrangler_d1_create", "migrations_dir": "migrations" }
+  ],
+  "assets": { "directory": "public" },
+  "vars": { "APP_URL": "http://localhost:8787", "MAIL_FROM": "Cumplista <hola@example.com>", "MAIL_DRIVER": "console" }
+}
