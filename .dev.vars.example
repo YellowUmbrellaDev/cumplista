@@ -1,0 +1,4 @@
+APP_URL=http://localhost:8787
+MAIL_DRIVER=console
+ALLOW_CONSOLE_MAIL=1
+SESSION_SECRET=dev-only-change-me-at-least-32-chars

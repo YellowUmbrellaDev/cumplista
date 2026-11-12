@@ -1,7 +1,7 @@
 import { translator } from "../i18n/index.js";
 import type { Mail } from "../ports.js";
 import type { ShareLinks } from "../views/props.js";
-import type { InviteCode, ListId, ListRecord } from "./types.js";
+import type { InviteCode, InviteToken, ListId, ListRecord } from "./types.js";
 
 function baseAppUrl(appUrl: string): string {
   return appUrl.replace(/\/+$/, "");
@@ -16,8 +16,8 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export function guestListUrl(appUrl: string, listId: ListId): string {
-  return `${baseAppUrl(appUrl)}/l/${listId}`;
+export function guestInviteUrl(appUrl: string, listId: ListId, inviteToken: InviteToken): string {
+  return `${baseAppUrl(appUrl)}/l/${listId}?i=${encodeURIComponent(inviteToken)}`;
 }
 
 export function ownerManageUrl(appUrl: string, listId: ListId, ownerToken: string): string {
@@ -26,11 +26,11 @@ export function ownerManageUrl(appUrl: string, listId: ListId, ownerToken: strin
 
 export function buildShareLinks(
   list: ListRecord,
-  guest: { code: InviteCode; email: string | null },
+  guest: { code: InviteCode; inviteToken: InviteToken; email: string | null },
   appUrl: string,
 ): ShareLinks {
   const t = translator(list.locale);
-  const url = guestListUrl(appUrl, list.id);
+  const url = guestInviteUrl(appUrl, list.id, guest.inviteToken);
   const text = t("invite.message", {
     owner: list.ownerName,
     title: list.title,
@@ -76,11 +76,11 @@ export function composeOwnerMail(list: ListRecord, ownerToken: string, appUrl: s
 
 export function composeGuestInviteMail(
   list: ListRecord,
-  guest: { email: string; code: InviteCode },
+  guest: { email: string; code: InviteCode; inviteToken: InviteToken },
   appUrl: string,
 ): Mail {
   const t = translator(list.locale);
-  const link = guestListUrl(appUrl, list.id);
+  const link = guestInviteUrl(appUrl, list.id, guest.inviteToken);
   const subject = t("invite.subject", {
     owner: list.ownerName,
     title: list.title,

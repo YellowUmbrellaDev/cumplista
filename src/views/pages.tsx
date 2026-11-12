@@ -21,6 +21,28 @@ import type {
   ShareLinks,
 } from "./props.js";
 
+function renderCreateListError(error: CreateListPage["error"], t: Translate) {
+  if (!error) return null;
+  switch (error) {
+    case "invalid":
+      return (
+        <div class="flash flash-err" role="alert">
+          {t("error.invalid")}
+        </div>
+      );
+    case "rate-limited":
+      return (
+        <div class="flash flash-err" role="alert">
+          {t("error.rate_limited")}
+        </div>
+      );
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
 export function CreateListView(p: CreateListPage) {
   const { t } = p.chrome;
   return (
@@ -30,11 +52,7 @@ export function CreateListView(p: CreateListPage) {
         <p class="lead-copy">{t("create.intro")}</p>
       </section>
 
-      {p.error === "invalid" && (
-        <div class="flash flash-err" role="alert">
-          {t("error.invalid")}
-        </div>
-      )}
+      {renderCreateListError(p.error, t)}
 
       <div class="surface-card surface-card-accent">
         <form method="post" action="/lists" class="stack-form">
@@ -158,6 +176,18 @@ function renderOwnerFlash(flash: OwnerPage["flash"], t: Translate) {
       return (
         <div class="flash flash-warn" role="alert">
           {t("owner.flash_mail_failed")}
+        </div>
+      );
+    case "mail-capped":
+      return (
+        <div class="flash flash-warn" role="alert">
+          {t("owner.flash_mail_throttled")}
+        </div>
+      );
+    case "regen-mail-failed":
+      return (
+        <div class="flash flash-warn" role="alert">
+          {t("owner.flash_regen_mail_failed")}
         </div>
       );
     case "invalid":
@@ -318,9 +348,11 @@ function GuestShareRow({
           {guest.email && <span class="guest-email">{guest.email}</span>}
         </div>
         <div class="guest-badges">
-          <span class="pill pill-code tabular">
-            {t("owner.guest_code_label", { code: guest.code })}
-          </span>
+          {!guest.joined && (
+            <span class="pill pill-code tabular">
+              {t("owner.guest_code_label", { code: guest.code })}
+            </span>
+          )}
           <span class={`pill ${guest.joined ? "pill-mint" : "pill-muted"}`}>
             {guest.joined ? t("owner.guest_joined") : t("owner.guest_invited")}
           </span>
@@ -328,7 +360,7 @@ function GuestShareRow({
       </div>
 
       <div class="guest-actions-bar">
-        {share && (
+        {!guest.joined && share && (
           <div class="share-block" data-share-text={share.text} data-share-url={share.url}>
             <button
               type="button"
@@ -501,13 +533,19 @@ export function OwnerView(p: OwnerPage) {
   );
 }
 
-function renderJoinError(error: JoinPage["error"], t: Translate) {
+function renderJoinError(error: JoinPage["error"], ownerName: string, t: Translate) {
   if (!error) return null;
   switch (error) {
     case "wrong-code":
       return (
         <div class="flash flash-err" role="alert">
           {t("error.wrong_code")}
+        </div>
+      );
+    case "code-used":
+      return (
+        <div class="flash flash-err" role="alert">
+          {t("error.code_used", { owner: ownerName })}
         </div>
       );
     case "throttled":
@@ -525,6 +563,7 @@ function renderJoinError(error: JoinPage["error"], t: Translate) {
 
 export function JoinView(p: JoinPage) {
   const { t } = p.chrome;
+  const missingInvite = p.invite === null;
   return (
     <Layout chrome={p.chrome} title={t("join.page_title", { title: p.list.title })}>
       <section class="hero-block">
@@ -532,10 +571,17 @@ export function JoinView(p: JoinPage) {
         <p class="lead-copy">{t("join.subtitle", { owner: p.list.ownerName })}</p>
       </section>
 
-      {renderJoinError(p.error, t)}
+      {renderJoinError(p.error, p.list.ownerName, t)}
+
+      {missingInvite && (
+        <div class="flash flash-warn" role="status">
+          {t("join.missing_invite", { owner: p.list.ownerName })}
+        </div>
+      )}
 
       <div class="surface-card surface-card-accent join-card">
         <form method="post" action={`/l/${p.list.id}/join`} class="stack-form">
+          {p.invite !== null && <input type="hidden" name="invite" value={p.invite} />}
           <div class="field-group">
             <label for="join-code">{t("join.code_label")}</label>
             <input
@@ -547,12 +593,13 @@ export function JoinView(p: JoinPage) {
               maxlength={4}
               autocomplete="one-time-code"
               required
+              disabled={missingInvite}
               placeholder={t("join.code_placeholder")}
               class="code-input tabular"
             />
           </div>
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary btn-wide">
+            <button type="submit" class="btn btn-primary btn-wide" disabled={missingInvite}>
               {t("join.submit")}
             </button>
           </div>

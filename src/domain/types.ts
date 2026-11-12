@@ -5,6 +5,8 @@ export type ItemId = string & { readonly __brand: "ItemId" };
 export type GuestId = string & { readonly __brand: "GuestId" };
 export type SideGiftId = string & { readonly __brand: "SideGiftId" };
 export type InviteCode = string & { readonly __brand: "InviteCode" };
+export type InviteToken = string & { readonly __brand: "InviteToken" };
+export type SessionNonce = string & { readonly __brand: "SessionNonce" };
 
 export type ItemDraft = {
   name: string;
@@ -46,13 +48,16 @@ export type OwnerGuest = {
   id: GuestId;
   name: string;
   email: string | null;
-  code: InviteCode;
-  joined: boolean;
-};
+} & (
+  | { joined: false; code: InviteCode; inviteToken: InviteToken }
+  | { joined: true; code: null; inviteToken: null }
+);
 
 export type Principal =
   | { role: "owner"; listId: ListId }
-  | { role: "guest"; listId: ListId; guestId: GuestId };
+  | { role: "guest"; listId: ListId; guestId: GuestId; sessionNonce: SessionNonce };
+
+export type MailOutcome = "sent" | "failed" | "capped";
 
 export type Result<T, E extends string> =
   | { ok: true; value: T }

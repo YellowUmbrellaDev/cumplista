@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type {
   GuestId,
   InviteCode,
+  InviteToken,
   ItemId,
   ListId,
   ListRecord,
@@ -62,6 +63,14 @@ function inviteCode(v: string): InviteCode {
   return v;
 }
 
+function isInviteToken(v: string): v is InviteToken {
+  return /^[A-Za-z0-9_-]{22,64}$/.test(v);
+}
+function inviteToken(v: string): InviteToken {
+  if (!isInviteToken(v)) throw new Error("invalid invite token");
+  return v;
+}
+
 const localeOptions: { code: LocaleCode; name: string }[] = [
   { code: "en", name: LOCALES.en.name },
   { code: "es", name: LOCALES.es.name },
@@ -103,9 +112,10 @@ const listEs: ListRecord = {
 
 const gCarlos = guestId("gst_carlos");
 const gLucia = guestId("gst_lucia");
+const luciaToken = inviteToken("inv_lucia_token_12345678");
 
-function buildShare(owner: string, title: string, code: string): ShareLinks {
-  const url = "https://cumplista.example/l/lst_marta30";
+function buildShare(owner: string, title: string, token: InviteToken, code: string): ShareLinks {
+  const url = `https://cumplista.example/l/lst_marta30?i=${encodeURIComponent(token)}`;
   const text = `${owner} invited you to their birthday gift list "${title}". Open ${url} and enter code ${code}.`;
   const encText = encodeURIComponent(text);
   const encUrl = encodeURIComponent(url);
@@ -119,13 +129,11 @@ function buildShare(owner: string, title: string, code: string): ShareLinks {
 }
 
 const sharesEn: Record<GuestId, ShareLinks> = {
-  [gCarlos]: buildShare("Marta", "Marta's 30th birthday", "4829"),
-  [gLucia]: buildShare("Marta", "Marta's 30th birthday", "9104"),
+  [gLucia]: buildShare("Marta", "Marta's 30th birthday", luciaToken, "9104"),
 };
 
 const sharesEs: Record<GuestId, ShareLinks> = {
-  [gCarlos]: buildShare("Marta", "Los 30 de Marta", "4829"),
-  [gLucia]: buildShare("Marta", "Los 30 de Marta", "9104"),
+  [gLucia]: buildShare("Marta", "Los 30 de Marta", luciaToken, "9104"),
 };
 
 rmSync(outDir, { recursive: true, force: true });
@@ -192,7 +200,8 @@ const pages: Record<string, string> = {
           id: gCarlos,
           name: "Carlos",
           email: "carlos@example.com",
-          code: inviteCode("4829"),
+          code: null,
+          inviteToken: null,
           joined: true,
         },
         {
@@ -200,6 +209,7 @@ const pages: Record<string, string> = {
           name: "Lucía",
           email: null,
           code: inviteCode("9104"),
+          inviteToken: luciaToken,
           joined: false,
         },
       ],
@@ -236,7 +246,8 @@ const pages: Record<string, string> = {
           id: gCarlos,
           name: "Carlos",
           email: "carlos@ejemplo.com",
-          code: inviteCode("4829"),
+          code: null,
+          inviteToken: null,
           joined: true,
         },
         {
@@ -244,6 +255,7 @@ const pages: Record<string, string> = {
           name: "Lucía",
           email: null,
           code: inviteCode("9104"),
+          inviteToken: luciaToken,
           joined: false,
         },
       ],
@@ -251,12 +263,13 @@ const pages: Record<string, string> = {
     }).toString(),
   ),
   "join-en.html": String(
-    JoinView({ chrome: makeChrome("en", "/l/lst_marta30"), list: listEn }).toString(),
+    JoinView({ chrome: makeChrome("en", "/l/lst_marta30"), list: listEn, invite: luciaToken }).toString(),
   ),
   "join-error-es.html": String(
     JoinView({
       chrome: makeChrome("es", "/l/lst_marta30"),
       list: listEs,
+      invite: luciaToken,
       error: "wrong-code",
     }).toString(),
   ),

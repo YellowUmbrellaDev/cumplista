@@ -10,7 +10,7 @@ export type Chrome = {
 
 export type ShareLinks = { text: string; url: string; whatsapp: string; telegram: string; mailto: string };
 
-export type CreateListPage = { chrome: Chrome; error?: "invalid" | undefined };
+export type CreateListPage = { chrome: Chrome; error?: "invalid" | "rate-limited" | undefined };
 export type CreatedPage = { chrome: Chrome; list: ListRecord; manageUrl: string; emailSent: boolean };
 export type OwnerPage = {
   chrome: Chrome;
@@ -20,9 +20,14 @@ export type OwnerPage = {
   totalCents: number;
   daysLeft: number | null;
   shares: Record<GuestId, ShareLinks>;
-  flash?: "guest-added" | "mail-failed" | "invalid" | undefined;
+  flash?: "guest-added" | "mail-failed" | "mail-capped" | "regen-mail-failed" | "invalid" | undefined;
 };
-export type JoinPage = { chrome: Chrome; list: ListRecord; error?: "wrong-code" | "throttled" | undefined };
+export type JoinPage = {
+  chrome: Chrome;
+  list: ListRecord;
+  invite: string | null;
+  error?: "wrong-code" | "code-used" | "throttled" | undefined;
+};
 export type GuestListPage = {
   chrome: Chrome;
   list: ListRecord;

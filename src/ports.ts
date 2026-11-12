@@ -23,4 +23,10 @@ export type Env = {
   SMTP_URL?: string;
 };
 
-export type Deps = { sql: Sql; mailer: Mailer; env: Env; now: () => Date };
+export type Deps = {
+  sql: Sql;
+  mailer: Mailer;
+  env: Env;
+  now: () => Date;
+  clientIp: (req: Request, runtime: unknown) => string;
+};

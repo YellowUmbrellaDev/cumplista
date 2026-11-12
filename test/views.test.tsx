@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   GuestId,
   InviteCode,
+  InviteToken,
   ItemId,
   ListId,
   ListRecord,
@@ -54,6 +55,14 @@ function isInviteCode(v: string): v is InviteCode {
 }
 function inviteCode(v: string): InviteCode {
   if (!isInviteCode(v)) throw new Error("invalid invite code");
+  return v;
+}
+
+function isInviteToken(v: string): v is InviteToken {
+  return /^[A-Za-z0-9_-]{22,64}$/.test(v);
+}
+function inviteToken(v: string): InviteToken {
+  if (!isInviteToken(v)) throw new Error("invalid invite token");
   return v;
 }
 
@@ -128,6 +137,16 @@ describe("views HTML output", () => {
     expect(esHtml).toContain("Haz tu lista de cumpleaños sin arruinar la sorpresa");
     expect(esHtml).toContain("Revisa los campos marcados e inténtalo de nuevo.");
     expect(esHtml).toContain("Crear lista de regalos");
+
+    const rateEnHtml = String(
+      (<CreateListView chrome={makeChrome("en", "/")} error="rate-limited" />).toString(),
+    );
+    expect(rateEnHtml).toContain("Too many requests. Try again in a while.");
+
+    const rateEsHtml = String(
+      (<CreateListView chrome={makeChrome("es", "/")} error="rate-limited" />).toString(),
+    );
+    expect(rateEsHtml).toContain("Demasiadas solicitudes. Inténtalo de nuevo más tarde.");
   });
 
   it("iterates chrome.locales dynamically in the footer switcher", () => {
@@ -140,7 +159,13 @@ describe("views HTML output", () => {
       ],
     };
     const out = String(
-      (<JoinView chrome={customChrome} list={sampleListEn} />).toString(),
+      (
+        <JoinView
+          chrome={customChrome}
+          list={sampleListEn}
+          invite="tok_guest_invite_123456"
+        />
+      ).toString(),
     );
     expect(out).toContain(">English<");
     expect(out).toContain(">Español<");
@@ -183,8 +208,9 @@ describe("views HTML output", () => {
     expect(unsentEsHtml).toContain("Abrir mi lista");
   });
 
-  it("renders OwnerView with item CRUD, share links, and zero claim or idea markers", () => {
+  it("renders OwnerView with item CRUD, share links only for unjoined guests, and zero claim or idea markers", () => {
     const g1 = guestId("gst_1");
+    const g2 = guestId("gst_2");
     const inviteText =
       'Marta invited you to their birthday gift list "Marta\'s 30th". Open https://cumplista.example/l/lst_1 and enter code 4829.';
     const encodedInvite = encodeURIComponent(inviteText);
@@ -233,6 +259,15 @@ describe("views HTML output", () => {
               name: "Carlos",
               email: "carlos@example.com",
               code: inviteCode("4829"),
+              inviteToken: inviteToken("tok_carlos_123456789012"),
+              joined: false,
+            },
+            {
+              id: g2,
+              name: "Lucia",
+              email: "lucia@example.com",
+              code: null,
+              inviteToken: null,
               joined: true,
             },
           ]}
@@ -251,8 +286,12 @@ describe("views HTML output", () => {
     expect(ownerHtml).toContain('action="/o/lst_1/guests"');
     expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_1/code"');
     expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_1/delete"');
+    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_2/code"');
+    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_2/delete"');
     expect(ownerHtml).toContain("Code 4829");
+    expect(ownerHtml).toContain("Not opened yet");
     expect(ownerHtml).toContain("Joined");
+    expect(ownerHtml).not.toContain("mailto:lucia@example.com");
     const htmlEncodedInvite = encodedInvite.replaceAll("'", "&#39;");
     expect(ownerHtml).toContain(`https://wa.me/?text=${htmlEncodedInvite}`);
     expect(ownerHtml).toContain(
@@ -295,30 +334,87 @@ describe("views HTML output", () => {
     expect(ownerEsHtml.toLowerCase()).not.toContain("idea");
   });
 
-  it("renders JoinView with 4-digit code form and localized error states", () => {
+  it("renders JoinView with hidden invite token, missing-invite disabled state, and localized error states", () => {
     const wrongEn = String(
       (
         <JoinView
           chrome={makeChrome("en", "/l/lst_1")}
           list={sampleListEn}
+          invite="tok_guest_invite_123456"
           error="wrong-code"
         />
       ).toString(),
     );
     expect(wrongEn).toContain('action="/l/lst_1/join"');
+    expect(wrongEn).toContain('name="invite" value="tok_guest_invite_123456"');
     expect(wrongEn).toContain('name="code"');
     expect(wrongEn).toContain("That code does not match. Check it with whoever invited you.");
+
+    const missingEn = String(
+      (
+        <JoinView
+          chrome={makeChrome("en", "/l/lst_1")}
+          list={sampleListEn}
+          invite={null}
+        />
+      ).toString(),
+    );
+    expect(missingEn).toContain(
+      "Open the personal invite link that Marta sent you to enter your 4-digit code.",
+    );
+    expect(missingEn).not.toContain('name="invite"');
+    expect(missingEn).toContain("disabled");
+
+    const missingEs = String(
+      (
+        <JoinView
+          chrome={makeChrome("es", "/l/lst_1")}
+          list={sampleListEs}
+          invite={null}
+        />
+      ).toString(),
+    );
+    expect(missingEs).toContain(
+      "Abre el enlace personal de invitación que te envió Marta para introducir tu código de 4 cifras.",
+    );
+    expect(missingEs).not.toContain('name="invite"');
+    expect(missingEs).toContain("disabled");
 
     const throttledEs = String(
       (
         <JoinView
           chrome={makeChrome("es", "/l/lst_1")}
           list={sampleListEs}
+          invite="tok_guest_invite_123456"
           error="throttled"
         />
       ).toString(),
     );
     expect(throttledEs).toContain("Demasiados códigos incorrectos. Inténtalo de nuevo en unos minutos.");
+
+    const usedEn = String(
+      (
+        <JoinView
+          chrome={makeChrome("en", "/l/lst_1")}
+          list={sampleListEn}
+          invite="tok_guest_invite_123456"
+          error="code-used"
+        />
+      ).toString(),
+    );
+    expect(usedEn).toContain("That code was already used. Ask Marta for a new one.");
+
+    const usedEs = String(
+      (
+        <JoinView
+          chrome={makeChrome("es", "/l/lst_1")}
+          list={sampleListEs}
+          invite="tok_guest_invite_123456"
+          error="code-used"
+        />
+      ).toString(),
+    );
+    expect(usedEs).toContain("Ese código ya se usó. Pídele a Marta uno nuevo.");
   });
 
   it("renders GuestListView states, hidden accessible wrapped label, received state, and guest ideas", () => {

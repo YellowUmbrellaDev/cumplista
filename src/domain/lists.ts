@@ -11,6 +11,7 @@ import {
   newListId,
 } from "./auth.js";
 import { composeOwnerMail, ownerManageUrl } from "./invite.js";
+import { DAY_MS, take } from "./rate.js";
 import type {
   ItemDraft,
   ItemId,
@@ -21,6 +22,9 @@ import type {
 } from "./types.js";
 
 export const MAX_ITEMS_PER_LIST = 500;
+export const LIST_CREATE_HOURLY_LIMIT = 5;
+export const LIST_CREATE_EMAIL_DAILY_LIMIT = 3;
+export const HOUR_MS = 60 * 60 * 1000;
 
 export type CreateListInput = {
   title: string;
@@ -101,7 +105,34 @@ export function computeDaysLeft(occasionDate: string | null, now: Date): number 
 export async function createList(
   deps: Deps,
   input: CreateListInput,
-): Promise<Result<{ list: ListRecord; manageUrl: string; emailSent: boolean }, never>> {
+  client: string,
+): Promise<Result<{ list: ListRecord; manageUrl: string; emailSent: boolean }, "rate-limited">> {
+  const nowMs = deps.now().getTime();
+  const emailScope = input.ownerEmail.trim().toLowerCase();
+  const ticket = await take(
+    deps,
+    { kind: "list-create", scope: emailScope, client, at: nowMs },
+    [
+      {
+        kind: "list-create",
+        scope: null,
+        client,
+        limit: LIST_CREATE_HOURLY_LIMIT,
+        windowMs: HOUR_MS,
+      },
+      {
+        kind: "list-create",
+        scope: emailScope,
+        client: null,
+        limit: LIST_CREATE_EMAIL_DAILY_LIMIT,
+        windowMs: DAY_MS,
+      },
+    ],
+  );
+  if (!ticket.ok) {
+    return { ok: false, error: "rate-limited" };
+  }
+
   const id = newListId();
   const ownerToken = generateOwnerToken();
   const ownerTokenHash = await hashOwnerToken(ownerToken);

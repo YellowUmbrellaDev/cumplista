@@ -60,6 +60,8 @@ export const es: Messages = {
   "owner.days_passed": "Fecha pasada",
   "owner.flash_guest_added": "Invitado añadido. Envíale su invitación desde abajo.",
   "owner.flash_mail_failed": "Invitado añadido, aunque no se pudo enviar el correo. Comparte su invitación directamente desde abajo.",
+  "owner.flash_regen_mail_failed": "Código nuevo creado, aunque no se pudo enviar el correo. Comparte el mensaje de invitación directamente desde abajo.",
+  "owner.flash_mail_throttled": "Se alcanzó el límite diario de correos de invitación en esta lista. Deja el correo vacío para compartir la invitación tú mismo o inténtalo mañana.",
   "owner.checklist_heading": "Deseos",
   "owner.add_item_label": "Regalo deseado",
   "owner.add_item_placeholder": "Añade un regalo que te haría ilusión...",
@@ -92,6 +94,7 @@ export const es: Messages = {
 
   "join.page_title": "Entrar en {title}",
   "join.subtitle": "Lista de regalos de {owner}. Introduce el código de 4 cifras de tu invitación.",
+  "join.missing_invite": "Abre el enlace personal de invitación que te envió {owner} para introducir tu código de 4 cifras.",
   "join.code_label": "Código de invitación de 4 cifras",
   "join.code_placeholder": "0000",
   "join.submit": "Ver lista de regalos",
@@ -117,4 +120,6 @@ export const es: Messages = {
   "guest.idea_by": "De {name}",
   "guest.idea_by_you": "De {name}, tu regalo",
   "guest.delete_idea": "Borrar {name}",
+  "error.code_used": "Ese código ya se usó. Pídele a {owner} uno nuevo.",
+  "error.rate_limited": "Demasiadas solicitudes. Inténtalo de nuevo más tarde.",
 };
