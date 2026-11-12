@@ -14,6 +14,7 @@ migrations/0001_init.sql FIXED
 --- slice CORE ---
 src/domain/lists.ts      services, pure over Deps
 src/domain/claims.ts
+src/domain/ideas.ts      side gifts services (CORE)
 src/domain/guests.ts
 src/domain/auth.ts       tokens, cookie sessions, throttle
 src/domain/invite.ts     invite message + share link + mail composition
@@ -33,6 +34,7 @@ public/app.css  public/app.js
 - Owner routes call only services returning `OwnerItem` / `OwnerGuest`. These contain no claim data. No query on the owner path may join `claims`.
 - Guest list query joins `claims` + `guests` and maps to `GuestItemState` relative to the requesting guest.
 - Test: for a list with claimed items, the whole HTML of every owner page and every owner JSON/redirect contains neither a claimer name nor any "taken" marker.
+- Guest-added gifts (`side_gifts`, type `SideGift`): any guest can add a gift that is not on the owner's list (same fields as an item). It means "I am buying this". Other guests see it in a separate section "Ideas from guests" with the author's name, readable and not blurred. Only the author can edit or delete it. The owner has no read path to `side_gifts`; no owner service or route may query this table. Removing a guest cascades their side gifts. The privacy test also asserts that no side gift name, price or author appears in any owner page.
 - Owner "mark as received" (`items.received_at`) is visible to guests but says nothing about who claimed.
 
 ## Domain rules
@@ -73,16 +75,17 @@ The link is `${APP_URL}/l/${listId}`. The code and the link are ALWAYS in the sa
 | `POST /l/:id/join` | anyone | verify code |
 | `GET /l/:id/list` | guest | list with free / mine / taken states |
 | `POST /l/:id/items/:item/claim`, `.../unclaim` | guest | claim/unclaim, redirect back with anchor |
+| `POST /l/:id/ideas`, `/l/:id/ideas/:idea` (edit), `/l/:id/ideas/:idea/delete` | guest | add/edit/delete own side gift (author check in the SQL `WHERE guest_id = ?`) |
 | `POST /lang` | anyone | sets `lang` cookie, redirects back |
 | `GET /healthz` | anyone | `ok` |
 
 Locale resolution: `lang` cookie, else Accept-Language, else `en`. A list's locale (used in emails and invite messages) is the owner's locale at creation. Language switcher is a tiny form in the footer.
 
-Extra owner features IN scope (small): item `received` toggle, drag-free reorder by up/down buttons, "price total" of the whole list, `occasion_date` with days left. Out of scope: accounts, images, comments, multiple lists per user UI, currency selection.
+Guests adding gifts is IN scope (see Domain rules). Extra owner features IN scope (small): item `received` toggle, drag-free reorder by up/down buttons, "price total" of the whole list, `occasion_date` with days left. Out of scope: accounts, images, comments, multiple lists per user UI, currency selection.
 
 ## View props (`src/views/props.ts`, fixed by the lead)
 
-Each page has one props type: `CreateListPage`, `CreatedPage`, `OwnerPage {list, items: OwnerItem[], guests: OwnerGuest[], totalCents, shareMessages: Record<GuestId,{text,url,mailto}>}`, `JoinPage {list, error?}`, `GuestListPage {list, guestName, items: GuestItem[]}`, plus a shared `Chrome {t, locale, locales, path}`. Views import types from `../domain/types.js` and never touch `Deps`.
+Each page has one props type: `CreateListPage`, `CreatedPage`, `OwnerPage {list, items: OwnerItem[], guests: OwnerGuest[], totalCents, shareMessages: Record<GuestId,{text,url,mailto}>}`, `JoinPage {list, error?}`, `GuestListPage {list, guestName, items: GuestItem[], sideGifts: SideGift[], flash?}`, plus a shared `Chrome {t, locale, locales, path}`. Views import types from `../domain/types.js` and never touch `Deps`.
 
 ## Visual design (DESIGN direction, set by the lead)
 
@@ -108,6 +111,7 @@ Mode: Operate for owner/guest pages, Persuade-lite for the create page. Subject:
 - create: `title`, `ownerName`, `ownerEmail`, `occasionDate`
 - item add/edit: `name`, `price` (decimal string, comma or dot), `url`, `details`
 - guest add: `name`, `email` (optional)
+- side gift add/edit: same fields as item (`name`, `price`, `url`, `details`)
 - join: `code`
 - lang: `lang`, `back`
 - action URLs are the routes in the table above, all `method="post"`, relative to the page.

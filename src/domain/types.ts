@@ -3,6 +3,7 @@ import type { LocaleCode } from "../i18n/index.js";
 export type ListId = string & { readonly __brand: "ListId" };
 export type ItemId = string & { readonly __brand: "ItemId" };
 export type GuestId = string & { readonly __brand: "GuestId" };
+export type SideGiftId = string & { readonly __brand: "SideGiftId" };
 export type InviteCode = string & { readonly __brand: "InviteCode" };
 
 export type ItemDraft = {
@@ -35,6 +36,11 @@ export type GuestItem = ItemDraft & {
   received: boolean;
   state: GuestItemState;
 };
+
+// A gift a guest added outside the owner's list. Visible only to guests, with
+// the author's name so others avoid buying the same thing. Not blurred: the
+// point is that other guests read it.
+export type SideGift = ItemDraft & { id: SideGiftId; byName: string; mine: boolean };
 
 export type OwnerGuest = {
   id: GuestId;

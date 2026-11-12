@@ -1,5 +1,5 @@
 import type { LocaleCode, Translate } from "../i18n/index.js";
-import type { GuestId, GuestItem, ListRecord, OwnerGuest, OwnerItem } from "../domain/types.js";
+import type { GuestId, GuestItem, SideGift, ListRecord, OwnerGuest, OwnerItem } from "../domain/types.js";
 
 export type Chrome = {
   t: Translate;
@@ -28,5 +28,6 @@ export type GuestListPage = {
   list: ListRecord;
   guestName: string;
   items: GuestItem[];
-  flash?: "already-taken" | undefined;
+  sideGifts: SideGift[];
+  flash?: "already-taken" | "invalid" | undefined;
 };

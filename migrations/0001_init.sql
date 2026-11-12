@@ -48,3 +48,19 @@ CREATE TABLE join_failures (
   failed_at INTEGER NOT NULL
 );
 CREATE INDEX join_failures_by_list ON join_failures(list_id, failed_at);
+
+-- Gifts a guest plans to buy that are not on the owner's list. Kept out of
+-- `items` on purpose: the owner path never reads this table, so privacy does
+-- not depend on a filter being remembered in every owner query. The author is
+-- the implicit claimer.
+CREATE TABLE side_gifts (
+  id          TEXT PRIMARY KEY,
+  list_id     TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+  guest_id    TEXT NOT NULL REFERENCES guests(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  price_cents INTEGER CHECK (price_cents IS NULL OR price_cents >= 0),
+  url         TEXT,
+  details     TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX side_gifts_by_list ON side_gifts(list_id, created_at);
