@@ -61,8 +61,7 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const PRICE_PATTERN = /^(\d{1,7})(?:[.,](\d{1,2}))?$/;
-const UNSAFE_BACK_CHARS = /[\u0000-\u001f\u007f\\]/;
-const SAFE_BACK_ORIGIN = "http://x.invalid";
+const SAFE_BACK_PATTERN = /^(?:\/|\/(?:o|l)\/[A-Za-z0-9_-]+(?:\/list)?)(?:\?flash=[a-z-]+)?$/;
 
 const AVAILABLE_LOCALES: { code: LocaleCode; name: string }[] = [];
 for (const [code, meta] of Object.entries(LOCALES)) {
@@ -266,17 +265,7 @@ function parseReceivedMode(form: URLSearchParams): Result<ReceivedMode, "invalid
 }
 
 export function parseSafeBack(raw: string): string {
-  if (!raw || UNSAFE_BACK_CHARS.test(raw)) return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  try {
-    const parsed = new URL(raw, SAFE_BACK_ORIGIN);
-    if (parsed.origin !== SAFE_BACK_ORIGIN || !parsed.pathname.startsWith("/")) {
-      return "/";
-    }
-    return `${parsed.pathname}${parsed.search}`;
-  } catch {
-    return "/";
-  }
+  return SAFE_BACK_PATTERN.test(raw) ? raw : "/";
 }
 
 function parseOwnerFlash(raw: string | undefined): OwnerPage["flash"] {
@@ -289,8 +278,8 @@ function parseGuestFlash(raw: string | undefined): GuestListPage["flash"] {
   return undefined;
 }
 
-function clientBucket(c: Context, deps: Deps): string {
-  return ipBucket(deps.clientIp(c.req.raw, c.env));
+function clientBucket(c: Context, deps: Deps, ipv6Prefix: 48 | 64 = 64): string {
+  return ipBucket(deps.clientIp(c.req.raw, c.env), { ipv6Prefix });
 }
 
 async function isAuthorizedOwner(c: Context, deps: Deps, listId: ListId): Promise<boolean> {
@@ -310,7 +299,12 @@ async function resolveAuthorizedGuest(
   if (!principal || principal.role !== "guest" || principal.listId !== listId) {
     return null;
   }
-  const guestResult = await getGuestForList(deps, listId, principal.guestId, principal.code);
+  const guestResult = await getGuestForList(
+    deps,
+    listId,
+    principal.guestId,
+    principal.sessionNonce,
+  );
   if (!guestResult.ok) {
     deleteCookie(c, cookieName, { path: "/" });
     return null;
@@ -421,7 +415,7 @@ export function createApp(getDeps: () => Deps): Hono {
         ...parsed.value,
         locale: chrome.locale,
       },
-      clientBucket(c, deps),
+      clientBucket(c, deps, 48),
     );
     if (!created.ok) {
       return c.html(CreateListView({ chrome, error: "rate-limited" }), 429);
@@ -623,7 +617,16 @@ export function createApp(getDeps: () => Deps): Hono {
       return c.redirect(`/l/${listId}/list`);
     }
 
-    return c.html(JoinView({ chrome: buildChrome(c, `/l/${listId}`), list: listResult.value }));
+    const rawInvite = c.req.query("i")?.trim() ?? "";
+    const invite = rawInvite.length > 0 ? rawInvite : null;
+
+    return c.html(
+      JoinView({
+        chrome: buildChrome(c, `/l/${listId}`),
+        list: listResult.value,
+        invite,
+      }),
+    );
   });
 
   app.post("/l/:id/join", postBodyLimit, async (c) => {
@@ -632,8 +635,22 @@ export function createApp(getDeps: () => Deps): Hono {
     if (!listId) return c.notFound();
 
     const form = await readForm(c);
+    const rawInvite = formString(form, "invite").trim();
+    if (rawInvite === "") {
+      const listResult = await getList(deps, listId);
+      if (!listResult.ok) return c.notFound();
+      return c.html(
+        JoinView({
+          chrome: buildChrome(c, `/l/${listId}`),
+          list: listResult.value,
+          invite: null,
+        }),
+        400,
+      );
+    }
+
     const code = formString(form, "code");
-    const joined = await joinWithCode(deps, listId, code, clientBucket(c, deps));
+    const joined = await joinWithCode(deps, listId, rawInvite, code, clientBucket(c, deps));
 
     if (!joined.ok) {
       if (joined.error === "not-found") return c.notFound();
@@ -644,6 +661,7 @@ export function createApp(getDeps: () => Deps): Hono {
         JoinView({
           chrome: buildChrome(c, `/l/${listId}`),
           list: listResult.value,
+          invite: rawInvite,
           error: joined.error,
         }),
         status,
@@ -655,7 +673,7 @@ export function createApp(getDeps: () => Deps): Hono {
         role: "guest",
         listId,
         guestId: joined.value.guestId,
-        code: joined.value.code,
+        sessionNonce: joined.value.sessionNonce,
       },
       deps.env.SESSION_SECRET,
     );

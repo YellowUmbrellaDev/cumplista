@@ -410,9 +410,15 @@ textarea::placeholder {
   opacity: 0.85;
 }
 
-input:hover,
-textarea:hover {
+input:hover:not(:disabled),
+textarea:hover:not(:disabled) {
   border-color: var(--ink);
+}
+
+input:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .secret-url-input {
@@ -489,15 +495,21 @@ textarea:hover {
   border-color: rgba(29, 24, 64, 0.14);
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   filter: brightness(0.95);
 }
 
-.btn-primary:active,
-.btn-secondary:active,
-.btn-chip:active,
-.icon-btn:active {
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-chip:active:not(:disabled),
+.icon-btn:active:not(:disabled) {
   transform: translateY(1px);
+}
+
+.btn:disabled,
+.btn-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-secondary {

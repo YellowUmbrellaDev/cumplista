@@ -93,6 +93,7 @@ export const es: Messages = {
 
   "join.page_title": "Entrar en {title}",
   "join.subtitle": "Lista de regalos de {owner}. Introduce el código de 4 cifras de tu invitación.",
+  "join.missing_invite": "Abre el enlace personal de invitación que te envió {owner} para introducir tu código de 4 cifras.",
   "join.code_label": "Código de invitación de 4 cifras",
   "join.code_placeholder": "0000",
   "join.submit": "Ver lista de regalos",

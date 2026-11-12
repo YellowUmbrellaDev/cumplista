@@ -12,7 +12,7 @@ export type AttemptRow = {
 
 export type RateRule = {
   kind: string;
-  scope: string;
+  scope: string | null;
   client: string | null;
   limit: number;
   windowMs: number;
@@ -43,20 +43,21 @@ export async function take(
 
     for (const rule of rules) {
       const cutoff = row.at - rule.windowMs;
-      if (rule.client === null) {
-        clauses.push(
-          `(SELECT COUNT(*) FROM attempts WHERE kind = ? AND scope = ? AND at > ?) < ?`,
-        );
-        params.push(rule.kind, rule.scope, cutoff, rule.limit);
-      } else {
-        clauses.push(
-          `(SELECT COUNT(*) FROM attempts WHERE kind = ? AND scope = ? AND client = ? AND at > ?) < ?`,
-        );
-        params.push(rule.kind, rule.scope, rule.client, cutoff, rule.limit);
+      const whereParts = ["kind = ?"];
+      params.push(rule.kind);
+      if (rule.scope !== null) {
+        whereParts.push("scope = ?");
+        params.push(rule.scope);
       }
+      if (rule.client !== null) {
+        whereParts.push("client = ?");
+        params.push(rule.client);
+      }
+      whereParts.push("at > ?");
+      params.push(cutoff, rule.limit);
+      clauses.push(`(SELECT COUNT(*) FROM attempts WHERE ${whereParts.join(" AND ")}) < ?`);
     }
 
-    // One conditional INSERT checks all windows and records the attempt atomically.
     res = await deps.sql.run(
       `INSERT INTO attempts (kind, scope, client, at)
        SELECT ?, ?, ?, ?

@@ -183,6 +183,10 @@ describe("Adapters", () => {
     expect(ipBucket("[2001:db8::1]:8443")).toBe("2001:0db8:0000:0000/64");
     expect(ipBucket("fe80::1%eth0")).toBe("fe80:0000:0000:0000/64");
     expect(ipBucket("::1")).toBe("0000:0000:0000:0000/64");
+
+    expect(ipBucket("2001:db8:abcd:1::1", { ipv6Prefix: 48 })).toBe("2001:0db8:abcd/48");
+    expect(ipBucket("2001:db8:abcd:9999::42", { ipv6Prefix: 48 })).toBe("2001:0db8:abcd/48");
+    expect(ipBucket("::ffff:203.0.113.10", { ipv6Prefix: 48 })).toBe("203.0.113.10");
   });
 
   it("resolves client IPs per runtime without trusting forged forwarded headers by default", () => {
@@ -221,7 +225,7 @@ describe("Adapters", () => {
   it("fails closed in buildWorkerEnv when required Worker bindings are missing or unsafe", () => {
     const validProd = {
       APP_URL: "https://gifts.example.com",
-      SESSION_SECRET: "prod-session-secret-value",
+      SESSION_SECRET: "prod-session-secret-value-at-least-32-chars",
       MAIL_DRIVER: "resend",
       MAIL_FROM: "Cumplista <noreply@gifts.example.com>",
       RESEND_API_KEY: "re_live_key",
@@ -229,7 +233,7 @@ describe("Adapters", () => {
 
     expect(buildWorkerEnv(validProd)).toEqual({
       APP_URL: "https://gifts.example.com",
-      SESSION_SECRET: "prod-session-secret-value",
+      SESSION_SECRET: "prod-session-secret-value-at-least-32-chars",
       MAIL_DRIVER: "resend",
       MAIL_FROM: "Cumplista <noreply@gifts.example.com>",
       RESEND_API_KEY: "re_live_key",
@@ -237,9 +241,15 @@ describe("Adapters", () => {
 
     const { SESSION_SECRET: _missingSecret, ...noSecret } = validProd;
     expect(() => buildWorkerEnv(noSecret)).toThrow(/SESSION_SECRET/);
+    expect(() => buildWorkerEnv({ ...validProd, SESSION_SECRET: "x".repeat(31) })).toThrow(
+      /SESSION_SECRET/,
+    );
 
     const { APP_URL: _missingUrl, ...noUrl } = validProd;
     expect(() => buildWorkerEnv(noUrl)).toThrow(/APP_URL/);
+    expect(() => buildWorkerEnv({ ...validProd, APP_URL: "http://gifts.example.com" })).toThrow(
+      /https:/,
+    );
     expect(() => buildWorkerEnv({ ...validProd, APP_URL: "http://localhost:8787" })).toThrow(
       /Loopback APP_URL/,
     );
@@ -254,6 +264,9 @@ describe("Adapters", () => {
     expect(() => buildWorkerEnv({ ...validProd, MAIL_DRIVER: "console" })).toThrow(
       /ALLOW_CONSOLE_MAIL/,
     );
+    expect(() =>
+      buildWorkerEnv({ ...validProd, MAIL_DRIVER: "console", ALLOW_CONSOLE_MAIL: "1" }),
+    ).toThrow(/loopback/i);
 
     const { MAIL_FROM: _missingFrom, ...noFrom } = validProd;
     expect(() => buildWorkerEnv(noFrom)).toThrow(/MAIL_FROM/);
@@ -266,13 +279,13 @@ describe("Adapters", () => {
         APP_URL: "http://localhost:8787",
         MAIL_DRIVER: "console",
         ALLOW_CONSOLE_MAIL: "1",
-        SESSION_SECRET: "dev-only-change-me",
+        SESSION_SECRET: "dev-only-change-me-at-least-32-chars",
       }),
     ).toEqual({
       APP_URL: "http://localhost:8787",
       MAIL_DRIVER: "console",
       MAIL_FROM: "Cumplista <hola@localhost>",
-      SESSION_SECRET: "dev-only-change-me",
+      SESSION_SECRET: "dev-only-change-me-at-least-32-chars",
     });
   });
 
@@ -286,7 +299,7 @@ describe("Adapters", () => {
       const okRes = await workerEntry.fetch(new Request("https://gifts.example.com/healthz"), {
         DB: d1,
         APP_URL: "https://gifts.example.com",
-        SESSION_SECRET: "prod-session-secret-value",
+        SESSION_SECRET: "prod-session-secret-value-at-least-32-chars",
         MAIL_DRIVER: "resend",
         MAIL_FROM: "Cumplista <noreply@gifts.example.com>",
         RESEND_API_KEY: "re_live_key",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   GuestId,
   InviteCode,
+  InviteToken,
   ItemId,
   ListId,
   ListRecord,
@@ -54,6 +55,14 @@ function isInviteCode(v: string): v is InviteCode {
 }
 function inviteCode(v: string): InviteCode {
   if (!isInviteCode(v)) throw new Error("invalid invite code");
+  return v;
+}
+
+function isInviteToken(v: string): v is InviteToken {
+  return /^[A-Za-z0-9_-]{22,64}$/.test(v);
+}
+function inviteToken(v: string): InviteToken {
+  if (!isInviteToken(v)) throw new Error("invalid invite token");
   return v;
 }
 
@@ -150,7 +159,13 @@ describe("views HTML output", () => {
       ],
     };
     const out = String(
-      (<JoinView chrome={customChrome} list={sampleListEn} />).toString(),
+      (
+        <JoinView
+          chrome={customChrome}
+          list={sampleListEn}
+          invite="tok_guest_invite_123456"
+        />
+      ).toString(),
     );
     expect(out).toContain(">English<");
     expect(out).toContain(">Español<");
@@ -244,6 +259,7 @@ describe("views HTML output", () => {
               name: "Carlos",
               email: "carlos@example.com",
               code: inviteCode("4829"),
+              inviteToken: inviteToken("tok_carlos_123456789012"),
               joined: false,
             },
             {
@@ -251,6 +267,7 @@ describe("views HTML output", () => {
               name: "Lucia",
               email: "lucia@example.com",
               code: null,
+              inviteToken: null,
               joined: true,
             },
           ]}
@@ -317,25 +334,58 @@ describe("views HTML output", () => {
     expect(ownerEsHtml.toLowerCase()).not.toContain("idea");
   });
 
-  it("renders JoinView with 4-digit code form and localized error states", () => {
+  it("renders JoinView with hidden invite token, missing-invite disabled state, and localized error states", () => {
     const wrongEn = String(
       (
         <JoinView
           chrome={makeChrome("en", "/l/lst_1")}
           list={sampleListEn}
+          invite="tok_guest_invite_123456"
           error="wrong-code"
         />
       ).toString(),
     );
     expect(wrongEn).toContain('action="/l/lst_1/join"');
+    expect(wrongEn).toContain('name="invite" value="tok_guest_invite_123456"');
     expect(wrongEn).toContain('name="code"');
     expect(wrongEn).toContain("That code does not match. Check it with whoever invited you.");
+
+    const missingEn = String(
+      (
+        <JoinView
+          chrome={makeChrome("en", "/l/lst_1")}
+          list={sampleListEn}
+          invite={null}
+        />
+      ).toString(),
+    );
+    expect(missingEn).toContain(
+      "Open the personal invite link that Marta sent you to enter your 4-digit code.",
+    );
+    expect(missingEn).not.toContain('name="invite"');
+    expect(missingEn).toContain("disabled");
+
+    const missingEs = String(
+      (
+        <JoinView
+          chrome={makeChrome("es", "/l/lst_1")}
+          list={sampleListEs}
+          invite={null}
+        />
+      ).toString(),
+    );
+    expect(missingEs).toContain(
+      "Abre el enlace personal de invitación que te envió Marta para introducir tu código de 4 cifras.",
+    );
+    expect(missingEs).not.toContain('name="invite"');
+    expect(missingEs).toContain("disabled");
 
     const throttledEs = String(
       (
         <JoinView
           chrome={makeChrome("es", "/l/lst_1")}
           list={sampleListEs}
+          invite="tok_guest_invite_123456"
           error="throttled"
         />
       ).toString(),
@@ -347,6 +397,7 @@ describe("views HTML output", () => {
         <JoinView
           chrome={makeChrome("en", "/l/lst_1")}
           list={sampleListEn}
+          invite="tok_guest_invite_123456"
           error="code-used"
         />
       ).toString(),
@@ -358,6 +409,7 @@ describe("views HTML output", () => {
         <JoinView
           chrome={makeChrome("es", "/l/lst_1")}
           list={sampleListEs}
+          invite="tok_guest_invite_123456"
           error="code-used"
         />
       ).toString(),

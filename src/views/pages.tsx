@@ -551,6 +551,7 @@ function renderJoinError(error: JoinPage["error"], ownerName: string, t: Transla
 
 export function JoinView(p: JoinPage) {
   const { t } = p.chrome;
+  const missingInvite = p.invite === null;
   return (
     <Layout chrome={p.chrome} title={t("join.page_title", { title: p.list.title })}>
       <section class="hero-block">
@@ -560,8 +561,15 @@ export function JoinView(p: JoinPage) {
 
       {renderJoinError(p.error, p.list.ownerName, t)}
 
+      {missingInvite && (
+        <div class="flash flash-warn" role="status">
+          {t("join.missing_invite", { owner: p.list.ownerName })}
+        </div>
+      )}
+
       <div class="surface-card surface-card-accent join-card">
         <form method="post" action={`/l/${p.list.id}/join`} class="stack-form">
+          {p.invite !== null && <input type="hidden" name="invite" value={p.invite} />}
           <div class="field-group">
             <label for="join-code">{t("join.code_label")}</label>
             <input
@@ -573,12 +581,13 @@ export function JoinView(p: JoinPage) {
               maxlength={4}
               autocomplete="one-time-code"
               required
+              disabled={missingInvite}
               placeholder={t("join.code_placeholder")}
               class="code-input tabular"
             />
           </div>
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary btn-wide">
+            <button type="submit" class="btn btn-primary btn-wide" disabled={missingInvite}>
               {t("join.submit")}
             </button>
           </div>

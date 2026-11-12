@@ -111,7 +111,11 @@ function parseIpv6Hextets(input: string): number[] | null {
   return fullParts.map((part) => Number.parseInt(part, 16));
 }
 
-export function ipBucket(raw: string | null | undefined): string {
+export type IpBucketOptions = {
+  ipv6Prefix?: 48 | 64;
+};
+
+export function ipBucket(raw: string | null | undefined, options?: IpBucketOptions): string {
   if (!raw) return "unknown";
   const trimmed = raw.trim();
   if (!trimmed) return "unknown";
@@ -144,6 +148,14 @@ export function ipBucket(raw: string | null | undefined): string {
 
   if (h0 === 0 && h1 === 0 && h2 === 0 && h3 === 0 && h4 === 0 && h5 === 0xffff) {
     return `${h6 >> 8}.${h6 & 0xff}.${h7 >> 8}.${h7 & 0xff}`;
+  }
+
+  const ipv6Prefix = options?.ipv6Prefix ?? 64;
+  if (ipv6Prefix === 48) {
+    return [h0, h1, h2]
+      .map((h) => h.toString(16).padStart(4, "0"))
+      .join(":")
+      .concat("/48");
   }
 
   // Residential and mobile IPv6 clients rotate interface identifiers inside a /64 prefix.

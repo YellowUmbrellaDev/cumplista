@@ -35,6 +35,9 @@ export function buildWorkerEnv(bindings: Omit<WorkerBindings, "DB">): Env {
   if (!sessionSecret) {
     throw new Error("SESSION_SECRET is required");
   }
+  if (sessionSecret.length < 32) {
+    throw new Error("SESSION_SECRET must be at least 32 characters");
+  }
 
   const rawDriver = bindings.MAIL_DRIVER?.trim() ?? "";
   if (!rawDriver) {
@@ -45,11 +48,6 @@ export function buildWorkerEnv(bindings: Omit<WorkerBindings, "DB">): Env {
   }
   if (rawDriver !== "console" && rawDriver !== "resend") {
     throw new Error(`Invalid MAIL_DRIVER: ${rawDriver}`);
-  }
-
-  const allowConsole = rawDriver === "console" && bindings.ALLOW_CONSOLE_MAIL === "1";
-  if (rawDriver === "console" && !allowConsole) {
-    throw new Error("MAIL_DRIVER=console requires ALLOW_CONSOLE_MAIL=1 on Cloudflare Workers");
   }
 
   const rawAppUrl = bindings.APP_URL?.trim() ?? "";
@@ -65,12 +63,25 @@ export function buildWorkerEnv(bindings: Omit<WorkerBindings, "DB">): Env {
   if (parsedAppUrl.protocol !== "http:" && parsedAppUrl.protocol !== "https:") {
     throw new Error(`Invalid APP_URL protocol: ${parsedAppUrl.protocol}`);
   }
-  if (isLoopbackHost(parsedAppUrl.hostname) && !allowConsole) {
+
+  const loopback = isLoopbackHost(parsedAppUrl.hostname);
+  if (!loopback && parsedAppUrl.protocol !== "https:") {
+    throw new Error("APP_URL must use https: unless host is loopback");
+  }
+
+  if (rawDriver === "console") {
+    if (bindings.ALLOW_CONSOLE_MAIL !== "1") {
+      throw new Error("MAIL_DRIVER=console requires ALLOW_CONSOLE_MAIL=1 on Cloudflare Workers");
+    }
+    if (!loopback) {
+      throw new Error("MAIL_DRIVER=console is only allowed when APP_URL is loopback");
+    }
+  } else if (loopback) {
     throw new Error("Loopback APP_URL is not allowed on Cloudflare Workers");
   }
 
   const mailFrom =
-    bindings.MAIL_FROM?.trim() || (allowConsole ? "Cumplista <hola@localhost>" : "");
+    bindings.MAIL_FROM?.trim() || (rawDriver === "console" ? "Cumplista <hola@localhost>" : "");
   if (!mailFrom) {
     throw new Error("MAIL_FROM is required");
   }

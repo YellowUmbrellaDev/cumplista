@@ -22,13 +22,15 @@ CREATE TABLE items (
 CREATE INDEX items_by_list ON items(list_id, position);
 
 CREATE TABLE guests (
-  id         TEXT PRIMARY KEY,
-  list_id    TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-  name       TEXT NOT NULL,
-  email      TEXT,
-  code       TEXT NOT NULL CHECK (length(code) = 4 AND code NOT GLOB '*[^0-9]*'),
-  joined_at  TEXT,
-  created_at TEXT NOT NULL,
+  id            TEXT PRIMARY KEY,
+  list_id       TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  email         TEXT,
+  code          TEXT NOT NULL CHECK (length(code) = 4 AND code NOT GLOB '*[^0-9]*'),
+  invite_token  TEXT NOT NULL UNIQUE CHECK (length(invite_token) >= 22),
+  session_nonce TEXT NOT NULL CHECK (length(session_nonce) >= 22),
+  joined_at     TEXT,
+  created_at    TEXT NOT NULL,
   UNIQUE (list_id, code)
 );
 
@@ -48,6 +50,8 @@ CREATE TABLE attempts (
   at     INTEGER NOT NULL
 );
 CREATE INDEX attempts_by_scope ON attempts(kind, scope, at);
+CREATE INDEX attempts_by_client ON attempts(kind, client, at);
+CREATE INDEX attempts_by_kind_at ON attempts(kind, at);
 
 -- Gifts a guest plans to buy that are not on the owner's list. Kept out of
 -- `items` on purpose: the owner path never reads this table, so privacy does

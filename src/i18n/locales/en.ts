@@ -93,6 +93,7 @@ export const en = {
 
   "join.page_title": "Join {title}",
   "join.subtitle": "{owner}'s birthday gift list. Enter the 4-digit code from your invitation.",
+  "join.missing_invite": "Open the personal invite link that {owner} sent you to enter your 4-digit code.",
   "join.code_label": "4-digit invite code",
   "join.code_placeholder": "0000",
   "join.submit": "See gift list",

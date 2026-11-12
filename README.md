@@ -1,14 +1,15 @@
 # Cumplista
 
-Cumplista runs birthday gift lists where guests coordinate without accounts and without spoiling the surprise for the list owner. The same Hono server-rendered application runs on Node 24 with `node:sqlite` and on Cloudflare Workers with D1.
+Cumplista runs birthday gift lists where guests coordinate without accounts while keeping gift claims off the owner's view. The same Hono server-rendered application runs on Node 24 with `node:sqlite` and on Cloudflare Workers with D1.
 
 ## Privacy model
 
+- The owner cannot see claims through the app, and can only see them by visibly joining as a guest.
 - Owner services read only `lists`, `items`, and `guests`, and never query `claims` or `side_gifts`.
-- Guests see who claimed each wish and can post off-list gifts in a separate section that the owner never sees.
+- Guests see who claimed each wish and can post off-list gifts in a separate section that does not appear on owner pages.
 - Marking a wish as received sets `items.received_at` without revealing which guest claimed it.
-- Each 4-digit guest code works once, disappears from the owner page after the guest joins, and binds that guest's session cookie.
-- Because the owner issues codes, an owner who keeps an unused code or clicks **New code** could join as that guest, though issuing a new code invalidates the guest's session and resets their joined badge.
+- Each guest receives a unique `invite_token` in `/l/:listId?i=<token>` and a single-use 4-digit `code`. Both disappear from the owner page after the guest joins, and the guest's session cookie binds to a per-guest `session_nonce` rather than the 4-digit code.
+- Issuing a new code rotates `code` and `session_nonce` while keeping `invite_token`, which invalidates any prior guest cookie and resets the guest's joined badge.
 
 ## Run on Node
 
@@ -48,7 +49,7 @@ npm run dev
 Follow these steps to deploy to Cloudflare.
 
 1. Run `npx wrangler d1 create cumplista` and set `d1_databases[0].database_id` in `wrangler.jsonc`.
-2. Add a `vars` object in `wrangler.jsonc` with your public `https://` `APP_URL`, `MAIL_DRIVER` set to `"resend"`, and `MAIL_FROM`. `buildWorkerEnv` throws if `SESSION_SECRET`, `APP_URL`, `MAIL_DRIVER`, or `MAIL_FROM` is missing, if `APP_URL` uses a loopback host, if `MAIL_DRIVER` is `smtp`, or if `MAIL_DRIVER` is `console` without `ALLOW_CONSOLE_MAIL=1`.
+2. Add a `vars` object in `wrangler.jsonc` with your public `https://` `APP_URL`, `MAIL_DRIVER` set to `"resend"`, and `MAIL_FROM`. `buildWorkerEnv` requires `SESSION_SECRET` to be at least 32 characters, requires `APP_URL` to use `https:` unless the host is loopback, rejects `MAIL_DRIVER=smtp`, rejects loopback `APP_URL` when `MAIL_DRIVER` is `resend`, and allows `MAIL_DRIVER=console` only when `ALLOW_CONSOLE_MAIL=1` and `APP_URL` is loopback.
 3. Apply migrations with `npx wrangler d1 migrations apply cumplista --remote`.
 4. Set secrets with `npx wrangler secret put SESSION_SECRET` and `npx wrangler secret put RESEND_API_KEY`.
 5. Run `npm run deploy`. Workers read client IPs only from `CF-Connecting-IP`.

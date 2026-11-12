@@ -25,6 +25,7 @@ export type OwnerPage = {
 export type JoinPage = {
   chrome: Chrome;
   list: ListRecord;
+  invite: string | null;
   error?: "wrong-code" | "code-used" | "throttled" | undefined;
 };
 export type GuestListPage = {

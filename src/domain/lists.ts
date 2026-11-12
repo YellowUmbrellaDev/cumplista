@@ -11,7 +11,7 @@ import {
   newListId,
 } from "./auth.js";
 import { composeOwnerMail, ownerManageUrl } from "./invite.js";
-import { take } from "./rate.js";
+import { DAY_MS, take } from "./rate.js";
 import type {
   ItemDraft,
   ItemId,
@@ -23,6 +23,8 @@ import type {
 
 export const MAX_ITEMS_PER_LIST = 500;
 export const LIST_CREATE_HOURLY_LIMIT = 5;
+export const LIST_CREATE_GLOBAL_HOURLY_LIMIT = 60;
+export const LIST_CREATE_EMAIL_DAILY_LIMIT = 3;
 export const HOUR_MS = 60 * 60 * 1000;
 
 export type CreateListInput = {
@@ -107,15 +109,30 @@ export async function createList(
   client: string,
 ): Promise<Result<{ list: ListRecord; manageUrl: string; emailSent: boolean }, "rate-limited">> {
   const nowMs = deps.now().getTime();
+  const emailScope = input.ownerEmail.trim().toLowerCase();
   const ticket = await take(
     deps,
-    { kind: "list-create", scope: "", client, at: nowMs },
+    { kind: "list-create", scope: emailScope, client, at: nowMs },
     [
       {
         kind: "list-create",
-        scope: "",
+        scope: null,
         client,
         limit: LIST_CREATE_HOURLY_LIMIT,
+        windowMs: HOUR_MS,
+      },
+      {
+        kind: "list-create",
+        scope: emailScope,
+        client: null,
+        limit: LIST_CREATE_EMAIL_DAILY_LIMIT,
+        windowMs: DAY_MS,
+      },
+      {
+        kind: "list-create",
+        scope: null,
+        client: null,
+        limit: LIST_CREATE_GLOBAL_HOURLY_LIMIT,
         windowMs: HOUR_MS,
       },
     ],

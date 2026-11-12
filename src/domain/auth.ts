@@ -1,14 +1,17 @@
 import type {
   GuestId,
   InviteCode,
+  InviteToken,
   ItemId,
   ListId,
   Principal,
+  SessionNonce,
   SideGiftId,
 } from "./types.js";
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const INVITE_CODE_PATTERN = /^[0-9]{4}$/;
+const TOKEN_128_PATTERN = /^[A-Za-z0-9_-]{22,64}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 function utf8Bytes(input: string): Uint8Array<ArrayBuffer> {
@@ -112,6 +115,30 @@ export function parseInviteCode(value: unknown): InviteCode | null {
   return isInviteCode(value) ? value : null;
 }
 
+export function isInviteToken(value: unknown): value is InviteToken {
+  return typeof value === "string" && TOKEN_128_PATTERN.test(value);
+}
+
+export function parseInviteToken(value: unknown): InviteToken | null {
+  return isInviteToken(value) ? value : null;
+}
+
+export function generateInviteToken(): InviteToken {
+  const token = randomBase64Url(16);
+  if (!isInviteToken(token)) throw new Error("Generated invalid InviteToken");
+  return token;
+}
+
+export function isSessionNonce(value: unknown): value is SessionNonce {
+  return typeof value === "string" && TOKEN_128_PATTERN.test(value);
+}
+
+export function generateSessionNonce(): SessionNonce {
+  const nonce = randomBase64Url(16);
+  if (!isSessionNonce(nonce)) throw new Error("Generated invalid SessionNonce");
+  return nonce;
+}
+
 export function generateInviteCode(existing: ReadonlySet<string> = new Set()): InviteCode {
   if (existing.size >= 10_000) {
     throw new Error("Invite code space exhausted");
@@ -166,8 +193,8 @@ function isPrincipal(value: unknown): value is Principal {
     return (
       "guestId" in value &&
       isGuestId(value.guestId) &&
-      "code" in value &&
-      isInviteCode(value.code)
+      "sessionNonce" in value &&
+      isSessionNonce(value.sessionNonce)
     );
   }
   return false;
