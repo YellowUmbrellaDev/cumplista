@@ -94,3 +94,20 @@ Mode: Operate for owner/guest pages, Persuade-lite for the create page. Subject:
 - Motion: none on load. Only state feedback (claim wraps with a 200ms ribbon sweep, respects `prefers-reduced-motion`).
 - Copy: sentence case, plain verbs, errors say what to do. Spanish uses "tú", neutral ES-ES/LatAm wording.
 - A11y: visible focus ring (3px ribbon color offset), contrast AA, labels for every field, `lang` attr per locale.
+
+## View component names (fixed, CORE imports, UI implements)
+
+`src/views/pages.tsx` exports exactly: `CreateListView(p: CreateListPage)`, `CreatedView(p: CreatedPage)`, `OwnerView(p: OwnerPage)`, `JoinView(p: JoinPage)`, `GuestListView(p: GuestListPage)`. Each returns a full `<html>` document via `src/views/layout.tsx`. CORE renders with `c.html(<OwnerView {...props} />)`.
+
+## Locale keys
+
+`invite.*` and `error.*` keys already exist in en.ts/es.ts, written by the lead. UI owns every other key and may add to those files, never rename existing keys. CORE may only use existing keys; if CORE needs a new key it writes the use as `t("x.y")` and reports the key name so the lead adds it.
+
+## Form field names (fixed so CORE and UI agree)
+
+- create: `title`, `ownerName`, `ownerEmail`, `occasionDate`
+- item add/edit: `name`, `price` (decimal string, comma or dot), `url`, `details`
+- guest add: `name`, `email` (optional)
+- join: `code`
+- lang: `lang`, `back`
+- action URLs are the routes in the table above, all `method="post"`, relative to the page.
