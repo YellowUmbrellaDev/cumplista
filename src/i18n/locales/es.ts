@@ -8,6 +8,6 @@ export const es: Messages = {
   "invite.owner_message": "Gestiona tu lista aquí: {link}. Guarda este enlace en privado, es tu llave.",
   "error.throttled": "Demasiados códigos incorrectos. Inténtalo de nuevo en unos minutos.",
   "error.wrong_code": "Ese código no coincide. Compruébalo con quien te invitó.",
-  "error.already_taken": "Alguien acaba de coger ese regalo.",
+  "error.already_taken": "Alguien acaba de elegir ese regalo.",
   "error.invalid": "Revisa los campos marcados e inténtalo de nuevo.",
 };
