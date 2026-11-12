@@ -514,6 +514,8 @@ describe("Cumplista CORE slice", () => {
       { headers: { "x-test-client-ip": "203.0.113.77" } },
     );
     expect(crossGuestJoin.status).toBe(401);
+    const failedJoinBack = /name="back" value="([^"]+)"/.exec(await crossGuestJoin.text());
+    expect(failedJoinBack?.[1]).toBe(`/l/${listId}?i=${diego.invite}`);
 
     for (let i = 0; i < 8; i++) {
       const wrongRes = await postForm(

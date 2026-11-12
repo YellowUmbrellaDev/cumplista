@@ -270,6 +270,11 @@ export function parseSafeBack(raw: string): string {
   return SAFE_BACK_PATTERN.test(raw) ? raw : "/";
 }
 
+function joinChrome(c: Context, listId: ListId, invite: string | null): Chrome {
+  const path = invite !== null && isInviteToken(invite) ? `/l/${listId}?i=${invite}` : `/l/${listId}`;
+  return buildChrome(c, path);
+}
+
 function parseOwnerFlash(raw: string | undefined): OwnerPage["flash"] {
   if (raw === "guest-added" || raw === "mail-failed" || raw === "invalid") return raw;
   return undefined;
@@ -624,7 +629,7 @@ export function createApp(getDeps: () => Deps): Hono {
 
     return c.html(
       JoinView({
-        chrome: buildChrome(c, invite && isInviteToken(invite) ? `/l/${listId}?i=${invite}` : `/l/${listId}`),
+        chrome: joinChrome(c, listId, invite),
         list: listResult.value,
         invite,
       }),
@@ -643,7 +648,7 @@ export function createApp(getDeps: () => Deps): Hono {
       if (!listResult.ok) return c.notFound();
       return c.html(
         JoinView({
-          chrome: buildChrome(c, `/l/${listId}`),
+          chrome: joinChrome(c, listId, null),
           list: listResult.value,
           invite: null,
         }),
@@ -661,7 +666,7 @@ export function createApp(getDeps: () => Deps): Hono {
       const status = joined.error === "throttled" ? 429 : 401;
       return c.html(
         JoinView({
-          chrome: buildChrome(c, `/l/${listId}`),
+          chrome: joinChrome(c, listId, rawInvite),
           list: listResult.value,
           invite: rawInvite,
           error: joined.error,
