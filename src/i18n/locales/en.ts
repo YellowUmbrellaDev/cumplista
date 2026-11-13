@@ -117,7 +117,7 @@ export const en = {
   "owner.days_passed": "Celebration passed",
   "owner.flash_locale_saved": "List language updated.",
   "owner.locale_heading": "List language",
-  "owner.locale_hint": "Sets how prices and numbers look on this list, for you and for your guests.",
+  "owner.locale_hint": "Sets the number format and currency on this list (English uses dollars, Spanish uses euros). Prices are not converted, so the same amount just shows in the other currency.",
   "owner.locale_save": "Save language",
   "owner.flash_invite_regenerated": "New invite link created. The previous link no longer accepts new registrations.",
   "owner.checklist_heading": "Wishes",

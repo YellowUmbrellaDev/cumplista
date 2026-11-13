@@ -119,7 +119,7 @@ export const es: Messages = {
   "owner.days_passed": "Fecha pasada",
   "owner.flash_locale_saved": "Idioma de la lista actualizado.",
   "owner.locale_heading": "Idioma de la lista",
-  "owner.locale_hint": "Define cómo se muestran los precios y los números en esta lista, para ti y para tus invitados.",
+  "owner.locale_hint": "Define el formato de los números y la divisa de esta lista (inglés usa dólares, español usa euros). Los precios no se convierten, así que la misma cifra se muestra en la otra divisa.",
   "owner.locale_save": "Guardar idioma",
   "owner.flash_invite_regenerated": "Nuevo enlace de invitación creado. El enlace anterior ya no admite nuevos registros.",
   "owner.checklist_heading": "Deseos",
