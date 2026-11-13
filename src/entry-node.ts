@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { createCaptcha } from "./adapters/captcha.js";
+import { createGoogleAuth } from "./adapters/google.js";
 import { createMailer } from "./adapters/mail.js";
 import { createSqliteSql } from "./adapters/sqlite.js";
 import { createApp } from "./app.js";
@@ -23,12 +25,20 @@ function parsePort(raw: string | undefined): number {
 function parseMailDriver(raw: string | undefined): Env["MAIL_DRIVER"] {
   if (!raw || raw === "console") return "console";
   if (raw === "resend" || raw === "smtp") return raw;
+  if (raw === "cloudflare") {
+    throw new Error("MAIL_DRIVER=cloudflare is only supported on Cloudflare Workers");
+  }
   throw new Error(`Invalid MAIL_DRIVER: ${raw}`);
 }
 
 function resolveSessionSecret(): string {
-  const secret = process.env.SESSION_SECRET;
-  if (secret && secret.length > 0) return secret;
+  const secret = process.env.SESSION_SECRET?.trim() ?? "";
+  if (secret.length > 0) {
+    if (process.env.NODE_ENV === "production" && secret.length < 32) {
+      throw new Error("SESSION_SECRET must be at least 32 characters");
+    }
+    return secret;
+  }
   if (process.env.NODE_ENV === "production") {
     throw new Error("SESSION_SECRET is required when NODE_ENV=production");
   }
@@ -79,23 +89,54 @@ function isMainModule(): boolean {
   }
 }
 
+function buildNodeEnv(port: number): Env {
+  const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY?.trim() ?? "";
+  const turnstileSecret = process.env.TURNSTILE_SECRET?.trim() ?? "";
+  if (Boolean(turnstileSiteKey) !== Boolean(turnstileSecret)) {
+    throw new Error(
+      "TURNSTILE_SITE_KEY and TURNSTILE_SECRET must both be set or both be unset",
+    );
+  }
+
+  const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() ?? "";
+  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim() ?? "";
+  if (Boolean(googleClientId) !== Boolean(googleClientSecret)) {
+    throw new Error(
+      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set or both be unset",
+    );
+  }
+
+  const resendApiKey = process.env.RESEND_API_KEY?.trim() ?? "";
+  const smtpUrl = process.env.SMTP_URL?.trim() ?? "";
+
+  return {
+    APP_URL: process.env.APP_URL?.trim() || `http://localhost:${port}`,
+    SESSION_SECRET: resolveSessionSecret(),
+    MAIL_FROM: process.env.MAIL_FROM?.trim() || "Cumplista <hola@localhost>",
+    MAIL_DRIVER: parseMailDriver(process.env.MAIL_DRIVER?.trim()),
+    ...(resendApiKey ? { RESEND_API_KEY: resendApiKey } : {}),
+    ...(smtpUrl ? { SMTP_URL: smtpUrl } : {}),
+    ...(turnstileSiteKey ? { TURNSTILE_SITE_KEY: turnstileSiteKey } : {}),
+    ...(turnstileSecret ? { TURNSTILE_SECRET: turnstileSecret } : {}),
+    ...(googleClientId ? { GOOGLE_CLIENT_ID: googleClientId } : {}),
+    ...(googleClientSecret ? { GOOGLE_CLIENT_SECRET: googleClientSecret } : {}),
+  };
+}
+
 function startNodeServer(): void {
   const port = parsePort(process.env.PORT);
   const trustProxy = process.env.TRUST_PROXY === "1";
-  const env: Env = {
-    APP_URL: process.env.APP_URL || `http://localhost:${port}`,
-    SESSION_SECRET: resolveSessionSecret(),
-    MAIL_FROM: process.env.MAIL_FROM || "Cumplista <hola@localhost>",
-    MAIL_DRIVER: parseMailDriver(process.env.MAIL_DRIVER),
-    ...(process.env.RESEND_API_KEY ? { RESEND_API_KEY: process.env.RESEND_API_KEY } : {}),
-    ...(process.env.SMTP_URL ? { SMTP_URL: process.env.SMTP_URL } : {}),
-  };
+  const env = buildNodeEnv(port);
 
   const sql = createSqliteSql(process.env.DATA_DIR);
   const mailer = createMailer(env);
+  const captcha = createCaptcha(env);
+  const google = createGoogleAuth(env);
   const deps: Deps = {
     sql,
     mailer,
+    captcha,
+    google,
     env,
     now: () => new Date(),
     clientIp: (req, runtime) => resolveNodeClientIp(req, runtime, trustProxy),

@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type {
-  GuestId,
-  InviteCode,
   InviteToken,
   ItemId,
   ListId,
   ListRecord,
+  OwnerList,
   SideGiftId,
 } from "../src/domain/types.js";
 import { LOCALES, type LocaleCode, translator } from "../src/i18n/index.js";
 import {
-  CreateListView,
-  CreatedView,
+  DashboardView,
+  ForgotView,
   GuestListView,
-  JoinView,
+  GuestLoginView,
+  InviteView,
+  LandingView,
+  LoginView,
   OwnerView,
+  ResetView,
+  SignupView,
+  TurnstileWidget,
 } from "../src/views/pages.js";
 import type { Chrome, ShareLinks } from "../src/views/props.js";
 
@@ -34,27 +39,11 @@ function itemId(v: string): ItemId {
   return v;
 }
 
-function isGuestId(v: string): v is GuestId {
-  return v.length > 0;
-}
-function guestId(v: string): GuestId {
-  if (!isGuestId(v)) throw new Error("invalid guest id");
-  return v;
-}
-
 function isSideGiftId(v: string): v is SideGiftId {
   return v.length > 0;
 }
 function sideGiftId(v: string): SideGiftId {
   if (!isSideGiftId(v)) throw new Error("invalid side gift id");
-  return v;
-}
-
-function isInviteCode(v: string): v is InviteCode {
-  return /^[0-9]{4}$/.test(v);
-}
-function inviteCode(v: string): InviteCode {
-  if (!isInviteCode(v)) throw new Error("invalid invite code");
   return v;
 }
 
@@ -66,24 +55,32 @@ function inviteToken(v: string): InviteToken {
   return v;
 }
 
-function makeChrome(locale: LocaleCode, path = "/o/lst_1"): Chrome {
-  const entries = (Object.keys(LOCALES) as LocaleCode[]).map((code) => ({
-    code,
-    name: LOCALES[code].name,
-  }));
+const localeEntries: { code: LocaleCode; name: string }[] = [
+  { code: "en", name: LOCALES.en.name },
+  { code: "es", name: LOCALES.es.name },
+];
+
+function makeChrome(
+  locale: LocaleCode,
+  path = "/",
+  session: Chrome["session"] = null,
+): Chrome {
   return {
     t: translator(locale),
     locale,
-    locales: entries,
+    locales: localeEntries,
     path,
+    session,
   };
 }
+
+const sampleToken = inviteToken("inv_marta_token_1234567890");
+const sampleInviteUrl = `https://cumplista.example/i/${sampleToken}`;
 
 const sampleListEn: ListRecord = {
   id: listId("lst_1"),
   title: "Marta's 30th",
   ownerName: "Marta",
-  ownerEmail: "marta@example.com",
   locale: "en",
   occasionDate: "2026-12-05",
 };
@@ -92,149 +89,448 @@ const sampleListEs: ListRecord = {
   id: listId("lst_1"),
   title: "Los 30 de Marta",
   ownerName: "Marta",
-  ownerEmail: "marta@ejemplo.com",
   locale: "es",
   occasionDate: "2026-12-05",
 };
 
-describe("views HTML output", () => {
-  it("renders CreateListView in English and Spanish with document shell and locale switcher", () => {
+const sampleOwnerListEn: OwnerList = { ...sampleListEn, inviteToken: sampleToken };
+const sampleOwnerListEs: OwnerList = { ...sampleListEs, inviteToken: sampleToken };
+
+function assertNoOwnerLeakWords(html: string) {
+  const lower = html.toLowerCase();
+  expect(lower).not.toContain("taken");
+  expect(lower).not.toContain("claim");
+  expect(lower).not.toContain("idea");
+  expect(lower).not.toContain("sidegift");
+  expect(lower).not.toContain("side-gift");
+  expect(lower).not.toContain("side_gift");
+}
+
+describe("views and locales contract", () => {
+  it("provides required cross-slice locale keys and neutral Spanish copy", () => {
+    const tEn = translator("en");
+    const tEs = translator("es");
+
+    expect(tEn("mail.reset_subject")).toBe("Reset your Cumplista password");
+    expect(tEs("mail.reset_subject")).toBe("Restablecer tu contraseña de Cumplista");
+
+    expect(tEn("mail.reset_body", { link: "https://cumplista.example/reset/abc" })).toBe(
+      "Open this link within 1 hour to set a new password: https://cumplista.example/reset/abc",
+    );
+    expect(tEs("mail.reset_body", { link: "https://cumplista.example/reset/abc" })).toBe(
+      "Abre este enlace en la próxima hora para elegir una contraseña nueva: https://cumplista.example/reset/abc",
+    );
+
+    expect(
+      tEn("share.message", {
+        owner: "Marta",
+        title: "Marta's 30th",
+        link: sampleInviteUrl,
+      }),
+    ).toBe(`Marta invited you to the gift list "Marta's 30th": ${sampleInviteUrl}`);
+    expect(
+      tEs("share.message", {
+        owner: "Marta",
+        title: "Los 30 de Marta",
+        link: sampleInviteUrl,
+      }),
+    ).toBe(`Marta te invitó a la lista de regalos "Los 30 de Marta": ${sampleInviteUrl}`);
+
+    expect(Object.keys(LOCALES.es.messages).sort()).toEqual(
+      Object.keys(LOCALES.en.messages).sort(),
+    );
+
+    for (const value of Object.values(LOCALES.es.messages)) {
+      expect(value.toLowerCase()).not.toMatch(/\bcog(er|e|ió|ido|ida|iendo)\b/);
+    }
+  });
+
+  it("renders Layout header auth links when signed out, session logout when signed in, and dynamic locale switcher", () => {
+    const signedOutHtml = String((<LandingView chrome={makeChrome("en", "/")} />).toString());
+    expect(signedOutHtml.startsWith('<!DOCTYPE html><html lang="en">')).toBe(true);
+    expect(signedOutHtml).toContain('<link rel="stylesheet" href="/app.css"');
+    expect(signedOutHtml).toContain('<script src="/app.js" defer');
+    expect(signedOutHtml).not.toMatch(/<script(?![^>]*src=)/i);
+    expect(signedOutHtml).toContain('href="/login"');
+    expect(signedOutHtml).toContain(">Log in<");
+    expect(signedOutHtml).toContain('href="/signup"');
+    expect(signedOutHtml).toContain(">Sign up<");
+    expect(signedOutHtml).not.toContain(">Sign out<");
+
+    const signedInOwner = makeChrome("es", "/dashboard", {
+      name: "Marta Ruiz",
+      logoutAction: "/logout",
+    });
+    const customChrome: Chrome = {
+      ...signedInOwner,
+      locales: [...signedInOwner.locales, { code: "en", name: "TestExtraLocale" }],
+    };
+    const signedInHtml = String((<LandingView chrome={customChrome} />).toString());
+    expect(signedInHtml.startsWith('<!DOCTYPE html><html lang="es">')).toBe(true);
+    expect(signedInHtml).toContain(">Marta Ruiz<");
+    expect(signedInHtml).toContain('method="post" action="/logout"');
+    expect(signedInHtml).toContain(">Cerrar sesión<");
+    expect(signedInHtml).toContain('action="/lang"');
+    expect(signedInHtml).toContain('name="back" value="/dashboard"');
+    expect(signedInHtml).toContain(">English<");
+    expect(signedInHtml).toContain(">Español<");
+    expect(signedInHtml).toContain(">TestExtraLocale<");
+  });
+
+  it("renders LandingView in English and Spanish", () => {
+    const enHtml = String((<LandingView chrome={makeChrome("en", "/")} />).toString());
+    expect(enHtml).toContain("Make a birthday gift list without spoiling the surprise");
+    expect(enHtml).toContain("How it works");
+    expect(enHtml).toContain(">Create account<");
+    expect(enHtml).toContain(">Log in<");
+
+    const esHtml = String((<LandingView chrome={makeChrome("es", "/")} />).toString());
+    expect(esHtml).toContain("Haz tu lista de cumpleaños sin arruinar la sorpresa");
+    expect(esHtml).toContain("Cómo funciona");
+    expect(esHtml).toContain(">Crear cuenta<");
+    expect(esHtml).toContain(">Iniciar sesión<");
+  });
+
+  it("renders TurnstileWidget and SignupView in English and Spanish with exact fields, Google toggle, and errors", () => {
+    expect(TurnstileWidget({ siteKey: null })).toBeNull();
+    expect(String((<TurnstileWidget siteKey={null} />).toString())).toBe("");
+    expect(String((<TurnstileWidget siteKey="ts_site_abc" />).toString())).toBe(
+      '<div class="cf-turnstile" data-sitekey="ts_site_abc" data-appearance="interaction-only"></div>',
+    );
+
     const enHtml = String(
       (
-        <CreateListView
-          chrome={makeChrome("en", "/")}
-          error="invalid"
+        <SignupView
+          chrome={makeChrome("en", "/signup")}
+          captchaSiteKey="ts_key_1"
+          googleEnabled={true}
+          values={{ name: "Marta", email: "marta@example.com" }}
+          error="weak-password"
         />
       ).toString(),
     );
-    expect(enHtml.startsWith('<!DOCTYPE html><html lang="en">')).toBe(true);
-    expect(enHtml).toContain('<link rel="stylesheet" href="/app.css"');
-    expect(enHtml).toContain('<script src="/app.js" defer');
-    expect(enHtml).not.toMatch(/<script(?![^>]*src=)/i);
-    expect(enHtml).toContain("Make a birthday list without spoiling the surprise");
-    expect(enHtml).toContain("Check the highlighted fields and try again.");
-    expect(enHtml).toContain('action="/lists"');
-    expect(enHtml).toContain('name="title"');
-    expect(enHtml).toContain('name="ownerName"');
-    expect(enHtml).toContain('name="ownerEmail"');
-    expect(enHtml).toContain('name="occasionDate"');
-    expect(enHtml).toContain('action="/lang"');
-    expect(enHtml).toContain('name="back" value="/"');
-    expect(enHtml).toContain('name="lang" value="en"');
-    expect(enHtml).toContain(">English<");
-    expect(enHtml).toContain('name="lang" value="es"');
-    expect(enHtml).toContain(">Español<");
+    expect(enHtml).toContain(
+      '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async',
+    );
+    expect(enHtml).toContain("defer");
+    expect(enHtml).toContain(
+      '<div class="cf-turnstile" data-sitekey="ts_key_1" data-appearance="interaction-only"></div>',
+    );
+    expect(enHtml).toContain('href="/auth/google"');
+    expect(enHtml).toContain("Continue with Google");
+    expect(enHtml).toContain('method="post" action="/signup"');
+    expect(enHtml).toContain('name="name"');
+    expect(enHtml).toContain('value="Marta"');
+    expect(enHtml).toContain('name="email"');
+    expect(enHtml).toContain('value="marta@example.com"');
+    expect(enHtml).toContain('name="password"');
+    expect(enHtml).toContain('type="password"');
+    expect(enHtml).toContain('autocomplete="new-password"');
+    expect(enHtml).toContain("Create your account");
+    expect(enHtml).toContain("Use a password between 10 and 200 characters.");
+
+    const esNoCaptchaNoGoogle = String(
+      (
+        <SignupView
+          chrome={makeChrome("es", "/signup")}
+          captchaSiteKey={null}
+          googleEnabled={false}
+          values={{ name: "", email: "" }}
+          error="email-taken"
+        />
+      ).toString(),
+    );
+    expect(esNoCaptchaNoGoogle).not.toContain("challenges.cloudflare.com");
+    expect(esNoCaptchaNoGoogle).not.toContain("cf-turnstile");
+    expect(esNoCaptchaNoGoogle).not.toContain("/auth/google");
+    expect(esNoCaptchaNoGoogle).toContain("Crea tu cuenta");
+    expect(esNoCaptchaNoGoogle).toContain("Ya existe una cuenta con ese correo. Inicia sesión.");
+
+    const captchaErrEn = String(
+      (
+        <SignupView
+          chrome={makeChrome("en", "/signup")}
+          captchaSiteKey={null}
+          googleEnabled={false}
+          values={{ name: "", email: "" }}
+          error="captcha"
+        />
+      ).toString(),
+    );
+    expect(captchaErrEn).toContain("Complete the security check and try again.");
+
+    const rateErrEs = String(
+      (
+        <SignupView
+          chrome={makeChrome("es", "/signup")}
+          captchaSiteKey={null}
+          googleEnabled={false}
+          values={{ name: "", email: "" }}
+          error="rate-limited"
+        />
+      ).toString(),
+    );
+    expect(rateErrEs).toContain("Demasiadas solicitudes. Inténtalo de nuevo más tarde.");
+  });
+
+  it("renders LoginView in English and Spanish with exact fields, no Turnstile, and error states", () => {
+    const enHtml = String(
+      (
+        <LoginView
+          chrome={makeChrome("en", "/login")}
+          googleEnabled={true}
+          email="marta@example.com"
+          error="wrong-credentials"
+        />
+      ).toString(),
+    );
+    expect(enHtml).not.toContain("challenges.cloudflare.com");
+    expect(enHtml).toContain('href="/auth/google"');
+    expect(enHtml).toContain('method="post" action="/login"');
+    expect(enHtml).toContain('name="email"');
+    expect(enHtml).toContain('value="marta@example.com"');
+    expect(enHtml).toContain('name="password"');
+    expect(enHtml).toContain('type="password"');
+    expect(enHtml).toContain('autocomplete="current-password"');
+    expect(enHtml).toContain('href="/forgot"');
+    expect(enHtml).toContain("Forgot your password?");
+    expect(enHtml).toContain("Wrong email or password.");
 
     const esHtml = String(
       (
-        <CreateListView
-          chrome={makeChrome("es", "/")}
-          error="invalid"
+        <LoginView
+          chrome={makeChrome("es", "/login")}
+          googleEnabled={false}
+          email=""
+          error="google-failed"
         />
       ).toString(),
     );
-    expect(esHtml.startsWith('<!DOCTYPE html><html lang="es">')).toBe(true);
-    expect(esHtml).toContain("Haz tu lista de cumpleaños sin arruinar la sorpresa");
-    expect(esHtml).toContain("Revisa los campos marcados e inténtalo de nuevo.");
-    expect(esHtml).toContain("Crear lista de regalos");
-
-    const rateEnHtml = String(
-      (<CreateListView chrome={makeChrome("en", "/")} error="rate-limited" />).toString(),
+    expect(esHtml).not.toContain("/auth/google");
+    expect(esHtml).toContain("Inicia sesión");
+    expect(esHtml).toContain("¿Olvidaste tu contraseña?");
+    expect(esHtml).toContain(
+      "No se pudo completar el acceso con Google. Inténtalo de nuevo o usa tu contraseña.",
     );
-    expect(rateEnHtml).toContain("Too many requests. Try again in a while.");
 
-    const rateEsHtml = String(
-      (<CreateListView chrome={makeChrome("es", "/")} error="rate-limited" />).toString(),
+    const throttledEs = String(
+      (
+        <LoginView
+          chrome={makeChrome("es", "/login")}
+          googleEnabled={false}
+          email=""
+          error="throttled"
+        />
+      ).toString(),
     );
-    expect(rateEsHtml).toContain("Demasiadas solicitudes. Inténtalo de nuevo más tarde.");
+    expect(throttledEs).toContain("Demasiados intentos. Inténtalo de nuevo en unos minutos.");
   });
 
-  it("iterates chrome.locales dynamically in the footer switcher", () => {
-    const base = makeChrome("en", "/l/lst_1");
-    const customChrome: Chrome = {
-      ...base,
-      locales: [
-        ...base.locales,
-        { code: "en", name: "TestExtraLocale" },
-      ],
+  it("renders ForgotView in English and Spanish across form and sent states", () => {
+    const formEn = String(
+      (
+        <ForgotView
+          chrome={makeChrome("en", "/forgot")}
+          captchaSiteKey="ts_forgot_key"
+          sent={false}
+          error="captcha"
+        />
+      ).toString(),
+    );
+    expect(formEn).toContain("Reset your password");
+    expect(formEn).toContain('method="post" action="/forgot"');
+    expect(formEn).toContain('name="email"');
+    expect(formEn).toContain("challenges.cloudflare.com/turnstile/v0/api.js");
+    expect(formEn).toContain('data-sitekey="ts_forgot_key"');
+    expect(formEn).toContain("Complete the security check and try again.");
+
+    const sentEs = String(
+      (
+        <ForgotView
+          chrome={makeChrome("es", "/forgot")}
+          captchaSiteKey="ts_forgot_key"
+          sent={true}
+        />
+      ).toString(),
+    );
+    expect(sentEs).not.toContain('action="/forgot"');
+    expect(sentEs).not.toContain("challenges.cloudflare.com");
+    expect(sentEs).toContain(
+      "Si existe una cuenta con ese correo, te enviamos un enlace válido durante 1 hora para restablecer tu contraseña.",
+    );
+
+    const sentEn = String(
+      (
+        <ForgotView
+          chrome={makeChrome("en", "/forgot")}
+          captchaSiteKey={null}
+          sent={true}
+        />
+      ).toString(),
+    );
+    expect(sentEn).toContain(
+      "If an account uses that email, we sent a password reset link valid for 1 hour.",
+    );
+  });
+
+  it("renders ResetView in English and Spanish across form, expired, and done states", () => {
+    const formEn = String(
+      (
+        <ResetView
+          chrome={makeChrome("en", "/reset/tok_reset_123")}
+          token="tok_reset_123"
+          state="form"
+          error="weak-password"
+        />
+      ).toString(),
+    );
+    expect(formEn).toContain("Choose a new password");
+    expect(formEn).toContain('method="post" action="/reset/tok_reset_123"');
+    expect(formEn).toContain('name="password"');
+    expect(formEn).toContain('type="password"');
+    expect(formEn).toContain('autocomplete="new-password"');
+    expect(formEn).toContain("Use a password between 10 and 200 characters.");
+
+    const formEs = String(
+      (
+        <ResetView
+          chrome={makeChrome("es", "/reset/tok_reset_123")}
+          token="tok_reset_123"
+          state="form"
+        />
+      ).toString(),
+    );
+    expect(formEs).toContain("Elige una contraseña nueva");
+    expect(formEs).toContain("Guardar nueva contraseña");
+
+    const expiredEn = String(
+      (
+        <ResetView
+          chrome={makeChrome("en", "/reset/tok_old")}
+          token="tok_old"
+          state="expired"
+        />
+      ).toString(),
+    );
+    expect(expiredEn).toContain("This reset link has expired");
+    expect(expiredEn).toContain('href="/forgot"');
+
+    const expiredEs = String(
+      (
+        <ResetView
+          chrome={makeChrome("es", "/reset/tok_old")}
+          token="tok_old"
+          state="expired"
+        />
+      ).toString(),
+    );
+    expect(expiredEs).toContain("Este enlace ha caducado");
+
+    const doneEn = String(
+      (
+        <ResetView
+          chrome={makeChrome("en", "/reset/tok_done")}
+          token="tok_done"
+          state="done"
+        />
+      ).toString(),
+    );
+    expect(doneEn).toContain("Password updated");
+    expect(doneEn).toContain('href="/dashboard"');
+
+    const doneEs = String(
+      (
+        <ResetView
+          chrome={makeChrome("es", "/reset/tok_done")}
+          token="tok_done"
+          state="done"
+        />
+      ).toString(),
+    );
+    expect(doneEs).toContain("Contraseña actualizada");
+    expect(doneEs).toContain("Ir a mis listas");
+  });
+
+  it("renders DashboardView in English and Spanish with create-list fields, flash states, and zero privacy-sensitive markers", () => {
+    const ownerSession = { name: "Marta", logoutAction: "/logout" };
+    const enHtml = String(
+      (
+        <DashboardView
+          chrome={makeChrome("en", "/dashboard", ownerSession)}
+          userName="Marta"
+          flash="created"
+          lists={[
+            {
+              id: "lst_1",
+              title: "Marta's 30th",
+              occasionDate: "2026-12-05",
+              daysLeft: 10,
+              itemCount: 3,
+            },
+            {
+              id: "lst_2",
+              title: "Summer party",
+              occasionDate: null,
+              daysLeft: null,
+              itemCount: 1,
+            },
+          ]}
+        />
+      ).toString(),
+    );
+    expect(enHtml).toContain("My lists");
+    expect(enHtml).toContain("Signed in as Marta.");
+    expect(enHtml).toContain("Gift list created.");
+    expect(enHtml).toContain('href="/o/lst_1"');
+    expect(enHtml).toContain("10 days left");
+    expect(enHtml).toContain("3 wishes");
+    expect(enHtml).toContain("1 wish");
+    expect(enHtml).toContain('method="post" action="/lists"');
+    expect(enHtml).toContain('name="title"');
+    expect(enHtml).toContain('name="occasionDate"');
+    expect(enHtml).toContain('name="locale"');
+    assertNoOwnerLeakWords(enHtml);
+
+    const esEmptyHtml = String(
+      (
+        <DashboardView
+          chrome={makeChrome("es", "/dashboard", ownerSession)}
+          userName="Marta"
+          flash="cap-reached"
+          lists={[]}
+        />
+      ).toString(),
+    );
+    expect(esEmptyHtml).toContain("Mis listas");
+    expect(esEmptyHtml).toContain("Has alcanzado el número máximo de listas por cuenta.");
+    expect(esEmptyHtml).toContain("Aún no tienes listas de regalos. Crea la primera abajo.");
+    expect(esEmptyHtml).toContain("Crear lista de regalos");
+    assertNoOwnerLeakWords(esEmptyHtml);
+  });
+
+  it("renders OwnerView in English and Spanish with item CRUD, generic invite link, fieldless regenerate/delete POST forms, and zero guest or claim UI", () => {
+    const ownerSession = { name: "Marta", logoutAction: "/logout" };
+    const shareText = `Marta invited you to the gift list "Marta's 30th": ${sampleInviteUrl}`;
+    const encodedText = encodeURIComponent(shareText);
+    const encodedUrl = encodeURIComponent(sampleInviteUrl);
+    const share: ShareLinks = {
+      text: shareText,
+      url: sampleInviteUrl,
+      whatsapp: `https://wa.me/?text=${encodedText}`,
+      telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
+      mailto: `mailto:?subject=Gift&body=${encodedText}`,
     };
-    const out = String(
-      (
-        <JoinView
-          chrome={customChrome}
-          list={sampleListEn}
-          invite="tok_guest_invite_123456"
-        />
-      ).toString(),
-    );
-    expect(out).toContain(">English<");
-    expect(out).toContain(">Español<");
-    expect(out).toContain(">TestExtraLocale<");
-    expect(out).toContain('name="back" value="/l/lst_1"');
-  });
 
-  it("renders CreatedView with private manage link and progressive copy button", () => {
-    const manageUrl = "https://cumplista.example/o/lst_1?k=secret_tok_123";
-    const sentHtml = String(
-      (
-        <CreatedView
-          chrome={makeChrome("en", "/lists")}
-          list={sampleListEn}
-          manageUrl={manageUrl}
-          emailSent={true}
-        />
-      ).toString(),
-    );
-    expect(sentHtml).toContain("Your gift list is ready");
-    expect(sentHtml).toContain("We sent your private link to marta@example.com.");
-    expect(sentHtml).toContain(`value="${manageUrl}"`);
-    expect(sentHtml).toContain(`href="${manageUrl}"`);
-    expect(sentHtml).toContain(`data-share-copy`);
-    expect(sentHtml).toContain(`data-share-text="${manageUrl}"`);
-    expect(sentHtml).toContain("hidden");
-
-    const unsentEsHtml = String(
-      (
-        <CreatedView
-          chrome={makeChrome("es", "/lists")}
-          list={sampleListEs}
-          manageUrl={manageUrl}
-          emailSent={false}
-        />
-      ).toString(),
-    );
-    expect(unsentEsHtml).toContain("Tu lista de regalos está lista");
-    expect(unsentEsHtml).toContain("No pudimos enviar el correo ahora mismo.");
-    expect(unsentEsHtml).toContain("Abrir mi lista");
-  });
-
-  it("renders OwnerView with item CRUD, share links only for unjoined guests, and zero claim or idea markers", () => {
-    const g1 = guestId("gst_1");
-    const g2 = guestId("gst_2");
-    const inviteText =
-      'Marta invited you to their birthday gift list "Marta\'s 30th". Open https://cumplista.example/l/lst_1 and enter code 4829.';
-    const encodedInvite = encodeURIComponent(inviteText);
-    const shareUrl = "https://cumplista.example/l/lst_1";
-    const encodedUrl = encodeURIComponent(shareUrl);
-
-    const shares: Record<GuestId, ShareLinks> = {
-      [g1]: {
-        text: inviteText,
-        url: shareUrl,
-        whatsapp: `https://wa.me/?text=${encodedInvite}`,
-        telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedInvite}`,
-        mailto: `mailto:carlos@example.com?subject=Invite&body=${encodedInvite}`,
-      },
-    };
-
-    const ownerHtml = String(
+    const ownerEn = String(
       (
         <OwnerView
-          chrome={makeChrome("en", "/o/lst_1")}
-          list={sampleListEn}
+          chrome={makeChrome("en", "/o/lst_1", ownerSession)}
+          list={sampleOwnerListEn}
           totalCents={8450}
           daysLeft={12}
-          flash="guest-added"
+          inviteUrl={sampleInviteUrl}
+          share={share}
+          flash="invite-regenerated"
           items={[
             {
               id: itemId("itm_1"),
@@ -253,177 +549,182 @@ describe("views HTML output", () => {
               received: true,
             },
           ]}
-          guests={[
-            {
-              id: g1,
-              name: "Carlos",
-              email: "carlos@example.com",
-              code: inviteCode("4829"),
-              inviteToken: inviteToken("tok_carlos_123456789012"),
-              joined: false,
-            },
-            {
-              id: g2,
-              name: "Lucia",
-              email: "lucia@example.com",
-              code: null,
-              inviteToken: null,
-              joined: true,
-            },
-          ]}
-          shares={shares}
         />
       ).toString(),
     );
 
-    expect(ownerHtml).toContain("12 days left");
-    expect(ownerHtml).toContain("$84.50");
-    expect(ownerHtml).toContain('action="/o/lst_1/items"');
-    expect(ownerHtml).toContain('action="/o/lst_1/items/itm_1/received"');
-    expect(ownerHtml).toContain('action="/o/lst_1/items/itm_1"');
-    expect(ownerHtml).toContain('action="/o/lst_1/items/itm_1/delete"');
-    expect(ownerHtml).toContain('action="/o/lst_1/items/itm_1/move"');
-    expect(ownerHtml).toContain('action="/o/lst_1/guests"');
-    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_1/code"');
-    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_1/delete"');
-    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_2/code"');
-    expect(ownerHtml).toContain('action="/o/lst_1/guests/gst_2/delete"');
-    expect(ownerHtml).toContain("Code 4829");
-    expect(ownerHtml).toContain("Not opened yet");
-    expect(ownerHtml).toContain("Joined");
-    expect(ownerHtml).not.toContain("mailto:lucia@example.com");
-    const htmlEncodedInvite = encodedInvite.replaceAll("'", "&#39;");
-    expect(ownerHtml).toContain(`https://wa.me/?text=${htmlEncodedInvite}`);
-    expect(ownerHtml).toContain(
-      `https://t.me/share/url?url=${encodedUrl}&amp;text=${htmlEncodedInvite}`,
+    expect(ownerEn).toContain("New invite link created.");
+    expect(ownerEn).toContain('href="/dashboard"');
+    expect(ownerEn).toContain("12 days left");
+    expect(ownerEn).toContain("$84.50");
+    expect(ownerEn).toContain('action="/o/lst_1/items"');
+    expect(ownerEn).toContain('name="name"');
+    expect(ownerEn).toContain('name="price"');
+    expect(ownerEn).toContain('name="url"');
+    expect(ownerEn).toContain('name="details"');
+    expect(ownerEn).toContain('action="/o/lst_1/items/itm_1/received"');
+    expect(ownerEn).toContain('action="/o/lst_1/items/itm_1"');
+    expect(ownerEn).toContain('action="/o/lst_1/items/itm_1/delete"');
+    expect(ownerEn).toContain('action="/o/lst_1/items/itm_1/move"');
+    expect(ownerEn).toContain(`value="${sampleInviteUrl}"`);
+    expect(ownerEn).toContain("data-share-native");
+    expect(ownerEn).toContain("data-share-copy");
+    expect(ownerEn).toContain(`data-share-url="${sampleInviteUrl}"`);
+    expect(ownerEn).toMatch(
+      /<form method="post" action="\/o\/lst_1\/invite"[^>]*>\s*<button type="submit"[^>]*>Regenerate invite link<\/button>\s*<\/form>/,
     );
-    expect(ownerHtml).toContain(
-      `mailto:carlos@example.com?subject=Invite&amp;body=${htmlEncodedInvite}`,
+    expect(ownerEn).toMatch(
+      /<form method="post" action="\/o\/lst_1\/delete"[^>]*>\s*<button type="submit"[^>]*>Delete list permanently<\/button>\s*<\/form>/,
     );
-    expect(ownerHtml).toContain("data-share-native");
-    expect(ownerHtml).toContain("data-share-copy");
-    expect(ownerHtml).toContain(`data-share-url="${shareUrl}"`);
-    expect(ownerHtml).toContain("data-share-text=");
+    expect(ownerEn).not.toContain("/guests");
+    assertNoOwnerLeakWords(ownerEn);
 
-    const lower = ownerHtml.toLowerCase();
-    expect(lower).not.toContain("taken");
-    expect(lower).not.toContain("claim");
-    expect(lower).not.toContain("idea");
-    expect(lower).not.toContain("sidegift");
-    expect(lower).not.toContain("side-gift");
-    expect(lower).not.toContain("side_gift");
-
-    const ownerEsHtml = String(
+    const ownerEs = String(
       (
         <OwnerView
-          chrome={makeChrome("es", "/o/lst_1")}
-          list={sampleListEs}
+          chrome={makeChrome("es", "/o/lst_1", ownerSession)}
+          list={sampleOwnerListEs}
           totalCents={8450}
           daysLeft={12}
+          inviteUrl={sampleInviteUrl}
+          share={share}
           items={[]}
-          guests={[]}
-          shares={{}}
         />
       ).toString(),
     );
-    expect(ownerEsHtml).toContain("Faltan 12 días");
-    expect(ownerEsHtml).toContain("84,50");
-    expect(ownerEsHtml).toContain("Tu lista está vacía.");
-    expect(ownerEsHtml.toLowerCase()).not.toContain("taken");
-    expect(ownerEsHtml.toLowerCase()).not.toContain("claim");
-    expect(ownerEsHtml.toLowerCase()).not.toContain("idea");
+    expect(ownerEs).toContain("Faltan 12 días");
+    expect(ownerEs).toContain("84,50");
+    expect(ownerEs).toContain(
+      "Tu lista está vacía. Escribe arriba tu primer deseo y luego comparte abajo el enlace de invitación.",
+    );
+    expect(ownerEs).toContain("Generar enlace nuevo");
+    expect(ownerEs).toContain("Borrar lista definitivamente");
+    expect(ownerEs).not.toContain("/guests");
+    assertNoOwnerLeakWords(ownerEs);
   });
 
-  it("renders JoinView with hidden invite token, missing-invite disabled state, and localized error states", () => {
-    const wrongEn = String(
+  it("renders InviteView in English and Spanish with list title and inviter first, register fields, PIN attributes, and sign-in disclosure", () => {
+    const enHtml = String(
       (
-        <JoinView
+        <InviteView
+          chrome={makeChrome("en", `/i/${sampleToken}`)}
+          list={sampleListEn}
+          token={sampleToken}
+          captchaSiteKey="ts_invite_key"
+          values={{ firstName: "Carlos", lastName: "García", email: "carlos@example.com" }}
+        />
+      ).toString(),
+    );
+
+    const titleIdx = enHtml.indexOf("Marta&#39;s 30th");
+    const invitedIdx = enHtml.indexOf("Marta invited you to this birthday gift list.");
+    const regFormIdx = enHtml.indexOf(`action="/i/${sampleToken}/register"`);
+    const alreadyIdx = enHtml.indexOf("Already registered? Sign in");
+    const loginFormIdx = enHtml.indexOf(`action="/i/${sampleToken}/login"`);
+
+    expect(titleIdx).toBeGreaterThan(0);
+    expect(invitedIdx).toBeGreaterThan(titleIdx);
+    expect(regFormIdx).toBeGreaterThan(invitedIdx);
+    expect(alreadyIdx).toBeGreaterThan(regFormIdx);
+    expect(loginFormIdx).toBeGreaterThan(alreadyIdx);
+
+    expect(enHtml).toContain('name="firstName"');
+    expect(enHtml).toContain('name="lastName"');
+    expect(enHtml).toContain('name="email"');
+    expect(enHtml).toContain('name="pin"');
+    expect(enHtml).toContain('inputmode="numeric"');
+    expect(enHtml).toContain('pattern="[0-9]{4}"');
+    expect(enHtml).toContain('maxlength="4"');
+    expect(enHtml).toContain('autocomplete="off"');
+    expect(enHtml).toContain("challenges.cloudflare.com/turnstile/v0/api.js");
+    expect(enHtml).toContain('data-sitekey="ts_invite_key"');
+    expect(enHtml).not.toContain('<details class="surface-card signin-disclosure" open');
+
+    const esTakenHtml = String(
+      (
+        <InviteView
+          chrome={makeChrome("es", `/i/${sampleToken}`)}
+          list={sampleListEs}
+          token={sampleToken}
+          captchaSiteKey={null}
+          values={{ firstName: "Carlos", lastName: "García", email: "carlos@ejemplo.com" }}
+          registerError="email-taken"
+          loginError="wrong-credentials"
+        />
+      ).toString(),
+    );
+    expect(esTakenHtml).not.toContain("challenges.cloudflare.com");
+    expect(esTakenHtml).toContain("Marta te invitó a su lista de regalos de cumpleaños.");
+    expect(esTakenHtml).toContain(
+      "Ya te registraste en esta lista con ese correo. Entra abajo con tu PIN de 4 cifras.",
+    );
+    expect(esTakenHtml).toContain("Correo o PIN de 4 cifras incorrectos.");
+    expect(esTakenHtml).toContain("¿Ya te registraste? Inicia sesión");
+    expect(esTakenHtml).toMatch(/<details class="surface-card signin-disclosure" open/);
+
+    const fullEn = String(
+      (
+        <InviteView
+          chrome={makeChrome("en", `/i/${sampleToken}`)}
+          list={sampleListEn}
+          token={sampleToken}
+          captchaSiteKey={null}
+          values={{ firstName: "", lastName: "", email: "" }}
+          registerError="full"
+        />
+      ).toString(),
+    );
+    expect(fullEn).toContain("This gift list has reached its guest limit.");
+  });
+
+  it("renders GuestLoginView in English and Spanish with email and 4-digit PIN fields", () => {
+    const enHtml = String(
+      (
+        <GuestLoginView
           chrome={makeChrome("en", "/l/lst_1")}
           list={sampleListEn}
-          invite="tok_guest_invite_123456"
-          error="wrong-code"
+          email="carlos@example.com"
+          error="wrong-credentials"
         />
       ).toString(),
     );
-    expect(wrongEn).toContain('action="/l/lst_1/join"');
-    expect(wrongEn).toContain('name="invite" value="tok_guest_invite_123456"');
-    expect(wrongEn).toContain('name="code"');
-    expect(wrongEn).toContain("That code does not match. Check it with whoever invited you.");
-
-    const missingEn = String(
-      (
-        <JoinView
-          chrome={makeChrome("en", "/l/lst_1")}
-          list={sampleListEn}
-          invite={null}
-        />
-      ).toString(),
+    expect(enHtml).toContain('method="post" action="/l/lst_1/login"');
+    expect(enHtml).toContain('name="email"');
+    expect(enHtml).toContain('value="carlos@example.com"');
+    expect(enHtml).toContain('name="pin"');
+    expect(enHtml).toContain('inputmode="numeric"');
+    expect(enHtml).toContain('pattern="[0-9]{4}"');
+    expect(enHtml).toContain('maxlength="4"');
+    expect(enHtml).toContain('autocomplete="off"');
+    expect(enHtml).toContain("Wrong email or 4-digit PIN.");
+    expect(enHtml).toContain(
+      "First time on this list? Open the invite link Marta shared with you to register.",
     );
-    expect(missingEn).toContain(
-      "Open the personal invite link that Marta sent you to enter your 4-digit code.",
-    );
-    expect(missingEn).not.toContain('name="invite"');
-    expect(missingEn).toContain("disabled");
 
-    const missingEs = String(
+    const esHtml = String(
       (
-        <JoinView
+        <GuestLoginView
           chrome={makeChrome("es", "/l/lst_1")}
           list={sampleListEs}
-          invite={null}
-        />
-      ).toString(),
-    );
-    expect(missingEs).toContain(
-      "Abre el enlace personal de invitación que te envió Marta para introducir tu código de 4 cifras.",
-    );
-    expect(missingEs).not.toContain('name="invite"');
-    expect(missingEs).toContain("disabled");
-
-    const throttledEs = String(
-      (
-        <JoinView
-          chrome={makeChrome("es", "/l/lst_1")}
-          list={sampleListEs}
-          invite="tok_guest_invite_123456"
+          email=""
           error="throttled"
         />
       ).toString(),
     );
-    expect(throttledEs).toContain("Demasiados códigos incorrectos. Inténtalo de nuevo en unos minutos.");
-
-    const usedEn = String(
-      (
-        <JoinView
-          chrome={makeChrome("en", "/l/lst_1")}
-          list={sampleListEn}
-          invite="tok_guest_invite_123456"
-          error="code-used"
-        />
-      ).toString(),
+    expect(esHtml).toContain(
+      "Entra con el correo y el PIN de 4 cifras que elegiste para la lista de Marta.",
     );
-    expect(usedEn).toContain("That code was already used. Ask Marta for a new one.");
-
-    const usedEs = String(
-      (
-        <JoinView
-          chrome={makeChrome("es", "/l/lst_1")}
-          list={sampleListEs}
-          invite="tok_guest_invite_123456"
-          error="code-used"
-        />
-      ).toString(),
-    );
-    expect(usedEs).toContain("Ese código ya se usó. Pídele a Marta uno nuevo.");
+    expect(esHtml).toContain("Demasiados intentos. Inténtalo de nuevo en unos minutos.");
   });
 
-  it("renders GuestListView states, hidden accessible wrapped label, received state, and guest ideas", () => {
+  it("renders GuestListView in English and Spanish with wrapped taken items, own claims, received badges, and side gifts", () => {
+    const guestSession = { name: "Diego Vega", logoutAction: "/l/lst_1/logout" };
     const guestHtml = String(
       (
         <GuestListView
-          chrome={makeChrome("en", "/l/lst_1/list")}
+          chrome={makeChrome("en", "/l/lst_1/list", guestSession)}
           list={sampleListEn}
-          guestName="Diego"
+          guestName="Diego Vega"
           flash="already-taken"
           items={[
             {
@@ -451,7 +752,7 @@ describe("views HTML output", () => {
               url: "https://camera.example.com",
               details: "35mm point and shoot",
               received: false,
-              state: { kind: "taken", byName: "Lucía" },
+              state: { kind: "taken", byName: "Lucía Ruiz" },
             },
             {
               id: itemId("itm_rec"),
@@ -470,7 +771,7 @@ describe("views HTML output", () => {
               priceCents: 6000,
               url: "https://tickets.example.com",
               details: "Two seats row 8",
-              byName: "Diego",
+              byName: "Diego Vega",
               mine: true,
             },
             {
@@ -479,7 +780,7 @@ describe("views HTML output", () => {
               priceCents: 1800,
               url: "https://bakery.example.com",
               details: "Bringing it to Saturday dinner",
-              byName: "Elena",
+              byName: "Elena Soto",
               mine: false,
             },
           ]}
@@ -487,45 +788,36 @@ describe("views HTML output", () => {
       ).toString(),
     );
 
+    expect(guestHtml).toContain('action="/l/lst_1/logout"');
     expect(guestHtml).toContain("Someone else just took that gift.");
-    expect(guestHtml).toContain("For Marta. Signed in as Diego.");
-
+    expect(guestHtml).toContain("For Marta. Signed in as Diego Vega.");
     expect(guestHtml).toContain('action="/l/lst_1/items/itm_free/claim"');
     expect(guestHtml).toContain('action="/l/lst_1/items/itm_mine/unclaim"');
     expect(guestHtml).toContain('<span class="gift-tag is-mint">');
     expect(guestHtml).toContain(">You<");
-
-    expect(guestHtml).toContain('<span class="sr-only">Analog camera, wrapped gift claimed by Lucía</span>');
-    expect(guestHtml).toContain("Analog camera");
-    expect(guestHtml).toContain(">Lucía<");
+    expect(guestHtml).toContain(
+      '<span class="sr-only">Analog camera, wrapped gift claimed by Lucía Ruiz</span>',
+    );
+    expect(guestHtml).toContain(">Lucía Ruiz<");
     expect(guestHtml).not.toContain("/l/lst_1/items/itm_taken/claim");
     expect(guestHtml).not.toContain("/l/lst_1/items/itm_taken/unclaim");
-
     expect(guestHtml).toContain(">Received<");
     expect(guestHtml).not.toContain("/l/lst_1/items/itm_rec/claim");
     expect(guestHtml).not.toContain("/l/lst_1/items/itm_rec/unclaim");
-
-    expect(guestHtml).toContain(
-      "Other guests see these gifts so nobody buys the same thing, and Marta never sees them.",
-    );
     expect(guestHtml).toContain('action="/l/lst_1/ideas"');
-    expect(guestHtml).toContain("Concert tickets");
-    expect(guestHtml).toContain("From Diego, your gift");
+    expect(guestHtml).toContain("From Diego Vega, your gift");
     expect(guestHtml).toContain('action="/l/lst_1/ideas/sg_mine"');
     expect(guestHtml).toContain('action="/l/lst_1/ideas/sg_mine/delete"');
-
-    expect(guestHtml).toContain("Homemade pistachio cake");
-    expect(guestHtml).toContain("From Elena");
-    expect(guestHtml).toContain("Bringing it to Saturday dinner");
+    expect(guestHtml).toContain("From Elena Soto");
     expect(guestHtml).not.toContain('action="/l/lst_1/ideas/sg_other"');
     expect(guestHtml).not.toContain('action="/l/lst_1/ideas/sg_other/delete"');
 
-    const guestEsEmpty = String(
+    const guestEs = String(
       (
         <GuestListView
-          chrome={makeChrome("es", "/l/lst_1/list")}
+          chrome={makeChrome("es", "/l/lst_1/list", guestSession)}
           list={sampleListEs}
-          guestName="Diego"
+          guestName="Diego Vega"
           flash="invalid"
           items={[
             {
@@ -535,23 +827,36 @@ describe("views HTML output", () => {
               url: null,
               details: null,
               received: false,
-              state: { kind: "taken", byName: "Lucía" },
+              state: { kind: "taken", byName: "Lucía Ruiz" },
             },
           ]}
           sideGifts={[]}
         />
       ).toString(),
     );
-    expect(guestEsEmpty).toContain("Revisa los campos marcados e inténtalo de nuevo.");
-    expect(guestEsEmpty).toContain(
-      '<span class="sr-only">Cámara analógica, regalo envuelto reservado por Lucía</span>',
+    expect(guestEs).toContain("Revisa los campos marcados e inténtalo de nuevo.");
+    expect(guestEs).toContain(
+      '<span class="sr-only">Cámara analógica, regalo envuelto reservado por Lucía Ruiz</span>',
     );
-    expect(guestEsEmpty).toContain(">Lucía<");
-    expect(guestEsEmpty).toContain(
+    expect(guestEs).toContain(
       "El resto de invitados ve estos regalos para no comprar lo mismo, y Marta nunca los ve.",
     );
-    expect(guestEsEmpty).toContain(
+    expect(guestEs).toContain(
       "¿Vas a comprar algo que no está en la lista? Añádelo arriba para que nadie lo repita.",
     );
+
+    const guestEsTakenFlash = String(
+      (
+        <GuestListView
+          chrome={makeChrome("es", "/l/lst_1/list", guestSession)}
+          list={sampleListEs}
+          guestName="Diego Vega"
+          flash="already-taken"
+          items={[]}
+          sideGifts={[]}
+        />
+      ).toString(),
+    );
+    expect(guestEsTakenFlash).toContain("Alguien acaba de elegir ese regalo.");
   });
 });

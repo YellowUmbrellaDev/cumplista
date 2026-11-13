@@ -5,7 +5,16 @@
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "d1_databases": [
-    { "binding": "DB", "database_name": "cumplista", "database_id": "REPLACE_WITH_wrangler_d1_create", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "cumplista", "database_id": "ce1ddb7c-68e0-4a67-aad0-4dc47afe43c2", "migrations_dir": "migrations" }
   ],
+  "send_email": [
+    { "name": "EMAIL" }
+  ],
+  "routes": [{ "pattern": "cumplista.yellowumbrella.dev", "custom_domain": true }],
+  "vars": {
+    "APP_URL": "https://cumplista.yellowumbrella.dev",
+    "MAIL_DRIVER": "cloudflare",
+    "MAIL_FROM": "Cumplista <hola@cumplista.yellowumbrella.dev>"
+  },
   "assets": { "directory": "public" }
 }

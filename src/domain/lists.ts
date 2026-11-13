@@ -1,39 +1,12 @@
-import { sendMail } from "../adapters/mail.js";
 import { DEFAULT_LOCALE, isLocale, type LocaleCode } from "../i18n/index.js";
 import type { Deps } from "../ports.js";
-import {
-  constantTimeEqual,
-  generateOwnerToken,
-  hashOwnerToken,
-  isItemId,
-  isListId,
-  newItemId,
-  newListId,
-} from "./auth.js";
-import { composeOwnerMail, ownerManageUrl } from "./invite.js";
+import { generateInviteToken, isInviteToken, isItemId, isListId, newItemId, newListId } from "./auth.js";
 import { DAY_MS, take } from "./rate.js";
-import type {
-  ItemDraft,
-  ItemId,
-  ListId,
-  ListRecord,
-  OwnerItem,
-  Result,
-} from "./types.js";
+import type { ItemDraft, ItemId, ListId, ListRecord, OwnerItem, OwnerList, Result, UserId } from "./types.js";
 
 export const MAX_ITEMS_PER_LIST = 500;
-export const LIST_CREATE_HOURLY_LIMIT = 5;
-export const LIST_CREATE_EMAIL_DAILY_LIMIT = 3;
-export const HOUR_MS = 60 * 60 * 1000;
 
-export type CreateListInput = {
-  title: string;
-  ownerName: string;
-  ownerEmail: string;
-  locale: LocaleCode;
-  occasionDate: string | null;
-};
-
+export type CreateListInput = { title: string; locale: LocaleCode; occasionDate: string | null };
 export type MoveDirection = "up" | "down";
 export type ReceivedMode = "toggle" | "received" | "unreceived";
 
@@ -41,14 +14,11 @@ type ListRow = {
   id: string;
   title: string;
   owner_name: string;
-  owner_email: string;
   locale: string;
   occasion_date: string | null;
 };
 
-type ListWithHashRow = ListRow & {
-  owner_token_hash: string;
-};
+type OwnerListRow = ListRow & { invite_token: string };
 
 type OwnerItemRow = {
   id: string;
@@ -59,10 +29,9 @@ type OwnerItemRow = {
   received_at: string | null;
 };
 
-type ItemPositionRow = {
-  id: string;
-  position: number;
-};
+type ItemPositionRow = { id: string; position: number };
+
+const LIST_COLUMNS = "l.id, l.title, u.name AS owner_name, l.locale, l.occasion_date";
 
 function toListRecord(row: ListRow): ListRecord | null {
   if (!isListId(row.id)) return null;
@@ -70,10 +39,14 @@ function toListRecord(row: ListRow): ListRecord | null {
     id: row.id,
     title: row.title,
     ownerName: row.owner_name,
-    ownerEmail: row.owner_email,
     locale: isLocale(row.locale) ? row.locale : DEFAULT_LOCALE,
     occasionDate: row.occasion_date,
   };
+}
+
+function toOwnerList(row: OwnerListRow): OwnerList | null {
+  const list = toListRecord(row);
+  return list && isInviteToken(row.invite_token) ? { ...list, inviteToken: row.invite_token } : null;
 }
 
 function toOwnerItem(row: OwnerItemRow): OwnerItem | null {
@@ -88,169 +61,116 @@ function toOwnerItem(row: OwnerItemRow): OwnerItem | null {
   };
 }
 
+function validDate(value: string): boolean {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export function computeDaysLeft(occasionDate: string | null, now: Date): number | null {
-  if (!occasionDate) return null;
-  const parts = occasionDate.split("-");
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const day = Number(parts[2]);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
-    return null;
-  }
-  const targetUtc = Date.UTC(year, month - 1, day);
-  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  return Math.round((targetUtc - todayUtc) / 86_400_000);
+  if (occasionDate === null || !validDate(occasionDate)) return null;
+  const target = new Date(`${occasionDate}T00:00:00.000Z`).getTime();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.round((target - today) / DAY_MS);
 }
 
 export async function createList(
   deps: Deps,
+  userId: UserId,
   input: CreateListInput,
-  client: string,
-): Promise<Result<{ list: ListRecord; manageUrl: string; emailSent: boolean }, "rate-limited">> {
-  const nowMs = deps.now().getTime();
-  const emailScope = input.ownerEmail.trim().toLowerCase();
-  const ticket = await take(
-    deps,
-    { kind: "list-create", scope: emailScope, client, at: nowMs },
-    [
-      {
-        kind: "list-create",
-        scope: null,
-        client,
-        limit: LIST_CREATE_HOURLY_LIMIT,
-        windowMs: HOUR_MS,
-      },
-      {
-        kind: "list-create",
-        scope: emailScope,
-        client: null,
-        limit: LIST_CREATE_EMAIL_DAILY_LIMIT,
-        windowMs: DAY_MS,
-      },
-    ],
-  );
-  if (!ticket.ok) {
-    return { ok: false, error: "rate-limited" };
+): Promise<Result<OwnerList, "invalid" | "rate-limited" | "cap-reached">> {
+  const title = input.title.trim();
+  if (!title || title.length > 120 || !isLocale(input.locale) ||
+      (input.occasionDate !== null && !validDate(input.occasionDate))) {
+    return { ok: false, error: "invalid" };
   }
-
+  const ticket = await take(deps,
+    { kind: "list-create", scope: userId, client: userId, at: deps.now().getTime() },
+    [{ kind: "list-create", scope: userId, client: null, limit: 20, windowMs: DAY_MS }],
+  );
+  if (!ticket.ok) return { ok: false, error: "rate-limited" };
   const id = newListId();
-  const ownerToken = generateOwnerToken();
-  const ownerTokenHash = await hashOwnerToken(ownerToken);
-  const createdAt = deps.now().toISOString();
-
-  await deps.sql.run(
-    `INSERT INTO lists (id, title, owner_name, owner_email, owner_token_hash, locale, occasion_date, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    id,
-    input.title,
-    input.ownerName,
-    input.ownerEmail,
-    ownerTokenHash,
-    input.locale,
-    input.occasionDate,
-    createdAt,
+  const inserted = await deps.sql.run(
+    `INSERT INTO lists (id, owner_user_id, title, locale, occasion_date, invite_token, created_at)
+     SELECT ?, id, ?, ?, ?, ?, ? FROM users
+     WHERE id = ? AND (SELECT COUNT(*) FROM lists WHERE owner_user_id = ?) < 50`,
+    id, title, input.locale, input.occasionDate, generateInviteToken(), deps.now().toISOString(), userId, userId,
   );
-
-  const list: ListRecord = {
-    id,
-    title: input.title,
-    ownerName: input.ownerName,
-    ownerEmail: input.ownerEmail,
-    locale: input.locale,
-    occasionDate: input.occasionDate,
-  };
-
-  const manageUrl = ownerManageUrl(deps.env.APP_URL, id, ownerToken);
-  const mail = composeOwnerMail(list, ownerToken, deps.env.APP_URL);
-  const emailSent = await sendMail(deps.mailer, mail);
-
-  return { ok: true, value: { list, manageUrl, emailSent } };
+  if (inserted.changes === 0) return { ok: false, error: "cap-reached" };
+  const row = await deps.sql.first<OwnerListRow>(
+    `SELECT ${LIST_COLUMNS}, l.invite_token FROM lists l JOIN users u ON u.id = l.owner_user_id
+     WHERE l.id = ? AND l.owner_user_id = ?`, id, userId,
+  );
+  const list = row ? toOwnerList(row) : null;
+  return list ? { ok: true, value: list } : { ok: false, error: "invalid" };
 }
 
-export async function verifyOwnerToken(
+export async function listUserLists(
   deps: Deps,
-  listId: ListId,
-  token: string,
-): Promise<Result<ListRecord, "not-found" | "invalid-token">> {
-  const row = await deps.sql.first<ListWithHashRow>(
-    `SELECT id, title, owner_name, owner_email, owner_token_hash, locale, occasion_date
-     FROM lists
-     WHERE id = ?`,
-    listId,
+  userId: UserId,
+): Promise<{ id: ListId; title: string; occasionDate: string | null; itemCount: number }[]> {
+  const rows = await deps.sql.all<{ id: string; title: string; occasion_date: string | null; item_count: number }>(
+    `SELECT l.id, l.title, l.occasion_date,
+       (SELECT COUNT(*) FROM items i WHERE i.list_id = l.id) AS item_count
+     FROM lists l WHERE l.owner_user_id = ? ORDER BY l.created_at DESC, l.rowid DESC`, userId,
   );
-  if (!row) return { ok: false, error: "not-found" };
-
-  const list = toListRecord(row);
-  if (!list) return { ok: false, error: "not-found" };
-
-  if (!token) return { ok: false, error: "invalid-token" };
-  const candidateHash = await hashOwnerToken(token);
-  if (!constantTimeEqual(candidateHash, row.owner_token_hash)) {
-    return { ok: false, error: "invalid-token" };
-  }
-
-  return { ok: true, value: list };
-}
-
-export async function getList(
-  deps: Deps,
-  listId: ListId,
-): Promise<Result<ListRecord, "not-found">> {
-  const row = await deps.sql.first<ListRow>(
-    `SELECT id, title, owner_name, owner_email, locale, occasion_date
-     FROM lists
-     WHERE id = ?`,
-    listId,
-  );
-  if (!row) return { ok: false, error: "not-found" };
-  const list = toListRecord(row);
-  if (!list) return { ok: false, error: "not-found" };
-  return { ok: true, value: list };
+  return rows.flatMap((row) => isListId(row.id)
+    ? [{ id: row.id, title: row.title, occasionDate: row.occasion_date, itemCount: row.item_count }] : []);
 }
 
 export async function getOwnerListView(
   deps: Deps,
+  userId: UserId,
   listId: ListId,
-): Promise<
-  Result<
-    {
-      list: ListRecord;
-      items: OwnerItem[];
-      totalCents: number;
-      daysLeft: number | null;
-    },
-    "not-found"
-  >
-> {
-  const listResult = await getList(deps, listId);
-  if (!listResult.ok) return listResult;
-
-  const itemRows = await deps.sql.all<OwnerItemRow>(
-    `SELECT id, name, price_cents, url, details, received_at
-     FROM items
-     WHERE list_id = ?
-     ORDER BY position ASC, id ASC`,
-    listId,
+): Promise<{ list: OwnerList; items: OwnerItem[]; totalCents: number } | null> {
+  const row = await deps.sql.first<OwnerListRow>(
+    `SELECT ${LIST_COLUMNS}, l.invite_token FROM lists l JOIN users u ON u.id = l.owner_user_id
+     WHERE l.id = ? AND l.owner_user_id = ?`, listId, userId,
   );
+  const list = row ? toOwnerList(row) : null;
+  if (!list) return null;
+  const rows = await deps.sql.all<OwnerItemRow>(
+    `SELECT id, name, price_cents, url, details, received_at
+     FROM items WHERE list_id = ? ORDER BY position ASC, id ASC`, listId,
+  );
+  const items = rows.flatMap((itemRow) => {
+    const item = toOwnerItem(itemRow);
+    return item ? [item] : [];
+  });
+  return { list, items, totalCents: items.reduce((total, item) => total + (item.priceCents ?? 0), 0) };
+}
 
-  const items: OwnerItem[] = [];
-  let totalCents = 0;
-  for (const row of itemRows) {
-    const item = toOwnerItem(row);
-    if (!item) continue;
-    items.push(item);
-    totalCents += item.priceCents ?? 0;
-  }
+export async function regenerateInviteToken(deps: Deps, userId: UserId, listId: ListId): Promise<OwnerList | null> {
+  const result = await deps.sql.run(
+    "UPDATE lists SET invite_token = ? WHERE id = ? AND owner_user_id = ?",
+    generateInviteToken(), listId, userId,
+  );
+  if (result.changes === 0) return null;
+  const row = await deps.sql.first<OwnerListRow>(
+    `SELECT ${LIST_COLUMNS}, l.invite_token FROM lists l JOIN users u ON u.id = l.owner_user_id
+     WHERE l.id = ? AND l.owner_user_id = ?`, listId, userId,
+  );
+  return row ? toOwnerList(row) : null;
+}
 
-  return {
-    ok: true,
-    value: {
-      list: listResult.value,
-      items,
-      totalCents,
-      daysLeft: computeDaysLeft(listResult.value.occasionDate, deps.now()),
-    },
-  };
+export async function deleteList(deps: Deps, userId: UserId, listId: ListId): Promise<boolean> {
+  const result = await deps.sql.run("DELETE FROM lists WHERE id = ? AND owner_user_id = ?", listId, userId);
+  return result.changes !== 0;
+}
+
+export async function getListById(deps: Deps, listId: ListId): Promise<ListRecord | null> {
+  const row = await deps.sql.first<ListRow>(
+    `SELECT ${LIST_COLUMNS} FROM lists l JOIN users u ON u.id = l.owner_user_id WHERE l.id = ?`, listId,
+  );
+  return row ? toListRecord(row) : null;
+}
+
+export async function getListByInviteToken(deps: Deps, token: string): Promise<ListRecord | null> {
+  if (!isInviteToken(token)) return null;
+  const row = await deps.sql.first<ListRow>(
+    `SELECT ${LIST_COLUMNS} FROM lists l JOIN users u ON u.id = l.owner_user_id WHERE l.invite_token = ?`, token,
+  );
+  return row ? toListRecord(row) : null;
 }
 
 export async function addItem(
@@ -258,21 +178,13 @@ export async function addItem(
   listId: ListId,
   draft: ItemDraft,
 ): Promise<Result<OwnerItem, "not-found" | "cap-reached">> {
-  const listResult = await getList(deps, listId);
-  if (!listResult.ok) return listResult;
-
-  const countRow = await deps.sql.first<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM items WHERE list_id = ?`,
-    listId,
-  );
-  if ((countRow?.count ?? 0) >= MAX_ITEMS_PER_LIST) {
-    return { ok: false, error: "cap-reached" };
-  }
+  if (!await getListById(deps, listId)) return { ok: false, error: "not-found" };
 
   const id = newItemId();
-  await deps.sql.run(
+  const inserted = await deps.sql.run(
     `INSERT INTO items (id, list_id, name, price_cents, url, details, position, received_at)
-     VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM items WHERE list_id = ?), 0), NULL)`,
+     SELECT ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(position) + 1 FROM items WHERE list_id = ?), 0), NULL
+     WHERE (SELECT COUNT(*) FROM items WHERE list_id = ?) < ?`,
     id,
     listId,
     draft.name,
@@ -280,7 +192,10 @@ export async function addItem(
     draft.url,
     draft.details,
     listId,
+    listId,
+    MAX_ITEMS_PER_LIST,
   );
+  if (inserted.changes === 0) return { ok: false, error: "cap-reached" };
 
   return {
     ok: true,

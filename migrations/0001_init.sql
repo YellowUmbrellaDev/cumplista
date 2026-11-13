@@ -1,13 +1,35 @@
-CREATE TABLE lists (
-  id               TEXT PRIMARY KEY,
-  title            TEXT NOT NULL,
-  owner_name       TEXT NOT NULL,
-  owner_email      TEXT NOT NULL,
-  owner_token_hash TEXT NOT NULL,
-  locale           TEXT NOT NULL,
-  occasion_date    TEXT,
-  created_at       TEXT NOT NULL
+-- Owner accounts. A user is an owner, owns many lists, and signs in with a
+-- password, Google, or both. session_epoch invalidates every cookie at once.
+CREATE TABLE users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE CHECK (email = lower(email)),
+  name          TEXT NOT NULL,
+  password_hash TEXT,
+  google_sub    TEXT UNIQUE,
+  session_epoch INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  CHECK (password_hash IS NOT NULL OR google_sub IS NOT NULL)
 );
+
+CREATE TABLE password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX password_resets_by_user ON password_resets(user_id);
+
+-- invite_token is the single generic link the owner shares. Anyone holding it
+-- may register as a guest of this list only.
+CREATE TABLE lists (
+  id            TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title         TEXT NOT NULL,
+  locale        TEXT NOT NULL,
+  occasion_date TEXT,
+  invite_token  TEXT NOT NULL UNIQUE CHECK (length(invite_token) >= 22),
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX lists_by_owner ON lists(owner_user_id, created_at);
 
 CREATE TABLE items (
   id          TEXT PRIMARY KEY,
@@ -21,17 +43,18 @@ CREATE TABLE items (
 );
 CREATE INDEX items_by_list ON items(list_id, position);
 
+-- A guest account exists for one list only. The owner path never reads this
+-- table, so the owner cannot learn who registered.
 CREATE TABLE guests (
   id            TEXT PRIMARY KEY,
   list_id       TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-  name          TEXT NOT NULL,
-  email         TEXT,
-  code          TEXT NOT NULL CHECK (length(code) = 4 AND code NOT GLOB '*[^0-9]*'),
-  invite_token  TEXT NOT NULL UNIQUE CHECK (length(invite_token) >= 22),
+  first_name    TEXT NOT NULL,
+  last_name     TEXT NOT NULL,
+  email         TEXT NOT NULL CHECK (email = lower(email)),
+  pin_hash      TEXT NOT NULL,
   session_nonce TEXT NOT NULL CHECK (length(session_nonce) >= 22),
-  joined_at     TEXT,
   created_at    TEXT NOT NULL,
-  UNIQUE (list_id, code)
+  UNIQUE (list_id, email)
 );
 
 -- One row per taken item. The primary key is the concurrency guard: two guests

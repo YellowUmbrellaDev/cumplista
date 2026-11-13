@@ -1,18 +1,25 @@
 import type { ExecutionContext } from "hono";
+import { createCaptcha } from "./adapters/captcha.js";
 import { createD1Sql, type D1Database } from "./adapters/d1.js";
-import { createMailer } from "./adapters/mail.js";
+import { createGoogleAuth } from "./adapters/google.js";
+import { createMailer, type EmailBinding } from "./adapters/mail.js";
 import { createApp } from "./app.js";
 import type { Deps, Env } from "./ports.js";
 
 export type WorkerBindings = {
   DB: D1Database;
-  APP_URL?: string;
-  SESSION_SECRET?: string;
-  MAIL_FROM?: string;
-  MAIL_DRIVER?: string;
-  ALLOW_CONSOLE_MAIL?: string;
-  RESEND_API_KEY?: string;
-  SMTP_URL?: string;
+  EMAIL?: EmailBinding | undefined;
+  APP_URL?: string | undefined;
+  SESSION_SECRET?: string | undefined;
+  MAIL_FROM?: string | undefined;
+  MAIL_DRIVER?: string | undefined;
+  ALLOW_CONSOLE_MAIL?: string | undefined;
+  RESEND_API_KEY?: string | undefined;
+  SMTP_URL?: string | undefined;
+  TURNSTILE_SITE_KEY?: string | undefined;
+  TURNSTILE_SECRET?: string | undefined;
+  GOOGLE_CLIENT_ID?: string | undefined;
+  GOOGLE_CLIENT_SECRET?: string | undefined;
 };
 
 function isLoopbackHost(hostname: string): boolean {
@@ -46,7 +53,11 @@ export function buildWorkerEnv(bindings: Omit<WorkerBindings, "DB">): Env {
   if (rawDriver === "smtp") {
     throw new Error("MAIL_DRIVER=smtp is not supported on Cloudflare Workers");
   }
-  if (rawDriver !== "console" && rawDriver !== "resend") {
+  if (
+    rawDriver !== "console" &&
+    rawDriver !== "cloudflare" &&
+    rawDriver !== "resend"
+  ) {
     throw new Error(`Invalid MAIL_DRIVER: ${rawDriver}`);
   }
 
@@ -86,17 +97,44 @@ export function buildWorkerEnv(bindings: Omit<WorkerBindings, "DB">): Env {
     throw new Error("MAIL_FROM is required");
   }
 
-  if (rawDriver === "resend" && !bindings.RESEND_API_KEY?.trim()) {
+  if (rawDriver === "cloudflare" && typeof bindings.EMAIL?.send !== "function") {
+    throw new Error("EMAIL binding is required when MAIL_DRIVER=cloudflare");
+  }
+
+  const resendApiKey = bindings.RESEND_API_KEY?.trim() ?? "";
+  if (rawDriver === "resend" && !resendApiKey) {
     throw new Error("RESEND_API_KEY is required when MAIL_DRIVER=resend");
   }
+
+  const turnstileSiteKey = bindings.TURNSTILE_SITE_KEY?.trim() ?? "";
+  const turnstileSecret = bindings.TURNSTILE_SECRET?.trim() ?? "";
+  if (Boolean(turnstileSiteKey) !== Boolean(turnstileSecret)) {
+    throw new Error(
+      "TURNSTILE_SITE_KEY and TURNSTILE_SECRET must both be set or both be unset",
+    );
+  }
+
+  const googleClientId = bindings.GOOGLE_CLIENT_ID?.trim() ?? "";
+  const googleClientSecret = bindings.GOOGLE_CLIENT_SECRET?.trim() ?? "";
+  if (Boolean(googleClientId) !== Boolean(googleClientSecret)) {
+    throw new Error(
+      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set or both be unset",
+    );
+  }
+
+  const smtpUrl = bindings.SMTP_URL?.trim() ?? "";
 
   return {
     APP_URL: rawAppUrl,
     SESSION_SECRET: sessionSecret,
     MAIL_FROM: mailFrom,
     MAIL_DRIVER: rawDriver,
-    ...(bindings.RESEND_API_KEY ? { RESEND_API_KEY: bindings.RESEND_API_KEY } : {}),
-    ...(bindings.SMTP_URL ? { SMTP_URL: bindings.SMTP_URL } : {}),
+    ...(resendApiKey ? { RESEND_API_KEY: resendApiKey } : {}),
+    ...(smtpUrl ? { SMTP_URL: smtpUrl } : {}),
+    ...(turnstileSiteKey ? { TURNSTILE_SITE_KEY: turnstileSiteKey } : {}),
+    ...(turnstileSecret ? { TURNSTILE_SECRET: turnstileSecret } : {}),
+    ...(googleClientId ? { GOOGLE_CLIENT_ID: googleClientId } : {}),
+    ...(googleClientSecret ? { GOOGLE_CLIENT_SECRET: googleClientSecret } : {}),
   };
 }
 
@@ -109,7 +147,9 @@ export default {
     const env = buildWorkerEnv(bindings);
     const deps: Deps = {
       sql: createD1Sql(bindings.DB),
-      mailer: createMailer(env),
+      mailer: createMailer(env, bindings),
+      captcha: createCaptcha(env),
+      google: createGoogleAuth(env),
       env,
       now: () => new Date(),
       clientIp: (req) => resolveWorkerClientIp(req),

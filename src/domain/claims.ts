@@ -73,7 +73,7 @@ export async function listGuestItems(
        i.details,
        i.received_at,
        c.guest_id AS claimer_id,
-       g.name AS claimer_name
+       g.first_name || ' ' || g.last_name AS claimer_name
      FROM items i
      LEFT JOIN claims c ON c.item_id = i.id
      LEFT JOIN guests g ON g.id = c.guest_id

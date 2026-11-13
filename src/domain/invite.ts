@@ -1,102 +1,22 @@
-import { translator } from "../i18n/index.js";
-import type { Mail } from "../ports.js";
+import type { Translate } from "../i18n/index.js";
 import type { ShareLinks } from "../views/props.js";
-import type { InviteCode, InviteToken, ListId, ListRecord } from "./types.js";
+import type { InviteToken } from "./types.js";
 
-function baseAppUrl(appUrl: string): string {
-  return appUrl.replace(/\/+$/, "");
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-export function guestInviteUrl(appUrl: string, listId: ListId, inviteToken: InviteToken): string {
-  return `${baseAppUrl(appUrl)}/l/${listId}?i=${encodeURIComponent(inviteToken)}`;
-}
-
-export function ownerManageUrl(appUrl: string, listId: ListId, ownerToken: string): string {
-  return `${baseAppUrl(appUrl)}/o/${listId}?k=${encodeURIComponent(ownerToken)}`;
+export function inviteUrl(appUrl: string, token: InviteToken): string {
+  return `${appUrl.replace(/\/+$/, "")}/i/${token}`;
 }
 
 export function buildShareLinks(
-  list: ListRecord,
-  guest: { code: InviteCode; inviteToken: InviteToken; email: string | null },
-  appUrl: string,
+  t: Translate,
+  list: { title: string; ownerName: string },
+  url: string,
 ): ShareLinks {
-  const t = translator(list.locale);
-  const url = guestInviteUrl(appUrl, list.id, guest.inviteToken);
-  const text = t("invite.message", {
-    owner: list.ownerName,
-    title: list.title,
-    link: url,
-    code: guest.code,
-  });
-  const subject = t("invite.subject", {
-    owner: list.ownerName,
-    title: list.title,
-  });
-  const recipient = guest.email ? encodeURIComponent(guest.email) : "";
-
+  const text = t("share.message", { owner: list.ownerName, title: list.title, link: url });
   return {
     text,
     url,
     whatsapp: `https://wa.me/?text=${encodeURIComponent(text)}`,
     telegram: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,
-    mailto: `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`,
-  };
-}
-
-export function composeOwnerMail(list: ListRecord, ownerToken: string, appUrl: string): Mail {
-  const t = translator(list.locale);
-  const link = ownerManageUrl(appUrl, list.id, ownerToken);
-  const subject = t("invite.owner_subject", {
-    title: list.title,
-    owner: list.ownerName,
-  });
-  const text = t("invite.owner_message", {
-    link,
-    title: list.title,
-    owner: list.ownerName,
-  });
-  const escapedLink = escapeHtml(link);
-
-  return {
-    to: list.ownerEmail,
-    subject,
-    text,
-    html: `<p>${escapeHtml(text)}</p><p><a href="${escapedLink}">${escapedLink}</a></p>`,
-  };
-}
-
-export function composeGuestInviteMail(
-  list: ListRecord,
-  guest: { email: string; code: InviteCode; inviteToken: InviteToken },
-  appUrl: string,
-): Mail {
-  const t = translator(list.locale);
-  const link = guestInviteUrl(appUrl, list.id, guest.inviteToken);
-  const subject = t("invite.subject", {
-    owner: list.ownerName,
-    title: list.title,
-  });
-  const text = t("invite.message", {
-    owner: list.ownerName,
-    title: list.title,
-    link,
-    code: guest.code,
-  });
-  const escapedLink = escapeHtml(link);
-
-  return {
-    to: guest.email,
-    subject,
-    text,
-    html: `<p>${escapeHtml(text)}</p><p><a href="${escapedLink}">${escapedLink}</a></p>`,
+    mailto: `mailto:?subject=${encodeURIComponent(list.title)}&body=${encodeURIComponent(text)}`,
   };
 }

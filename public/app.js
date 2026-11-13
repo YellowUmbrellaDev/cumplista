@@ -41,4 +41,11 @@
       });
     }
   }
+
+  for (const input of document.querySelectorAll("input.secret-url-input")) {
+    if (!(input instanceof HTMLInputElement)) continue;
+    input.addEventListener("click", () => {
+      input.select();
+    });
+  }
 })();
