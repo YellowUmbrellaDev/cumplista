@@ -1,75 +1,106 @@
-# Cumplista
+<p align="center">
+  <img src="docs/images/logo.svg" alt="Cumplista" width="96" height="61">
+</p>
 
-Cumplista runs birthday gift lists where guests coordinate without accounts while keeping gift claims off the owner's view. The same Hono server-rendered application runs on Node 24 with `node:sqlite` and on Cloudflare Workers with D1.
+<h1 align="center">Cumplista</h1>
 
-## Privacy model
+<p align="center">
+  Birthday gift lists without spoilers.<br>
+  One link, no apps to install, and the birthday person never sees who is buying what.
+</p>
 
-- The owner cannot see claims through the app, and can only see them by visibly joining as a guest.
-- Owner services read only `lists`, `items`, and `guests`, and never query `claims` or `side_gifts`.
-- Guests see who claimed each wish and can post off-list gifts in a separate section that does not appear on owner pages.
-- Marking a wish as received sets `items.received_at` without revealing which guest claimed it.
-- Each guest receives a unique `invite_token` in `/l/:listId?i=<token>` and a single-use 4-digit `code`. Both disappear from the owner page after the guest joins, and the guest's session cookie binds to a per-guest `session_nonce` rather than the 4-digit code.
-- Issuing a new code rotates `code` and `session_nonce` while keeping `invite_token`, which invalidates any prior guest cookie and resets the guest's joined badge.
+<p align="center">
+  <a href="https://github.com/YellowUmbrellaDev/cumplista/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/YellowUmbrellaDev/cumplista/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
+  <img alt="Node 24 or newer" src="https://img.shields.io/badge/node-%E2%89%A5%2024-339933.svg">
+  <img alt="Runs on Cloudflare Workers" src="https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020.svg">
+</p>
 
-## Run on Node
+<p align="center">
+  <img src="docs/images/hero.png" alt="The owner's list on a desktop and the guest invite and list on two phones" width="900">
+</p>
 
-Requires Node 24 or newer.
+## What it does
 
-```sh
-npm install
-SESSION_SECRET="$(openssl rand -base64 32)" APP_URL="http://localhost:8787" npm start
-```
+You write a wish list for your birthday. You share one link with your friends. They sign up in a minute, see the list and reserve what they will give. Everyone else sees that a gift is taken and by whom, so nobody buys the same thing twice. You see none of it, so the surprise stays intact.
 
-For local development with file watching, run `npm run dev:node`.
+- **One invite link per list.** Friends open it, enter a first name, last name, email and a 4-digit PIN, and they are in. They sign back in with email and PIN. Sessions last a year.
+- **Reserved gifts are wrapped.** A taken gift is blurred and shows a gift tag with the name of whoever reserved it. A tap reveals it.
+- **Side gifts.** A guest can add a gift that is not on the list, so other guests know it is covered. Only guests see these.
+- **A real account for the owner.** Email and password, or Google sign-in. One account can own many lists, one per birthday.
+- **Spanish and English.** Adding a language is one typed file and one registry line.
+- **Runs anywhere.** The same app runs on a small server with SQLite, or on Cloudflare Workers with D1.
 
-The Node entry point reads these environment variables.
+## Screenshots
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `SESSION_SECRET` | When `NODE_ENV=production` | Dev fallback with warning | HMAC-SHA256 secret for owner and guest cookies |
-| `APP_URL` | No | `http://localhost:<PORT>` | Public origin used in invite links, `Origin` checks, and `Secure` cookies |
-| `PORT` | No | `8787` | HTTP listen port |
-| `DATA_DIR` | No | `./data` | Directory or `.db` file path for SQLite, or `:memory:` |
-| `TRUST_PROXY` | No | `0` | Set to `1` behind a trusted reverse proxy to read the last `X-Forwarded-For` entry instead of the socket address |
-| `MAIL_DRIVER` | No | `console` | Outbound mail transport, one of `console`, `resend`, or `smtp` |
-| `MAIL_FROM` | No | `Cumplista <hola@localhost>` | Sender address for outgoing mail |
-| `RESEND_API_KEY` | When `MAIL_DRIVER=resend` | None | API key for the Resend HTTP API |
-| `SMTP_URL` | When `MAIL_DRIVER=smtp` | None | Connection URL passed to Nodemailer |
+<p align="center">
+  <img src="docs/images/phone-invite.png" alt="The invite page a friend sees: a short form with name, email and a 4-digit PIN" width="230">
+  &nbsp;
+  <img src="docs/images/phone-list-blur.png" alt="The guest list with two gifts already reserved, blurred and tagged with the name of who took them" width="230">
+  &nbsp;
+  <img src="docs/images/phone-list-reveal.png" alt="The same list after tapping a reserved gift to reveal it" width="230">
+</p>
 
-## Deploy on Cloudflare Workers
+## Privacy by structure
 
-`wrangler.jsonc` ships with no runtime defaults so a misconfigured Worker fails closed. For local Worker development, copy `.dev.vars.example` first.
+The owner never sees guests, how many there are, who reserved what, or the gifts guests add. This is not a setting. The owner-side modules (`lists`, `users`, `invite`, `password` and the owner and account routes) never mention the `guests`, `claims` or `side_gifts` tables, and a test fails if one ever does. A second test signs guests up, reserves gifts and adds side gifts, then checks that no owner page or redirect contains any of it.
 
-```sh
-cp .dev.vars.example .dev.vars
-npm run db:local
-npm run dev
-```
+Cumplista runs on trust. An owner who really wants to peek can register as a guest with their own link, and the app does not try to stop that. See [docs/configuration.md](docs/configuration.md) for the full list of known limits.
 
-Follow these steps to deploy to Cloudflare.
+## Quick start
 
-1. Run `npx wrangler d1 create cumplista` and set `d1_databases[0].database_id` in `wrangler.jsonc`.
-2. Add a `vars` object in `wrangler.jsonc` with your public `https://` `APP_URL`, `MAIL_DRIVER` set to `"resend"`, and `MAIL_FROM`. `buildWorkerEnv` requires `SESSION_SECRET` to be at least 32 characters, requires `APP_URL` to use `https:` unless the host is loopback, rejects `MAIL_DRIVER=smtp`, rejects loopback `APP_URL` when `MAIL_DRIVER` is `resend`, and allows `MAIL_DRIVER=console` only when `ALLOW_CONSOLE_MAIL=1` and `APP_URL` is loopback.
-3. Apply migrations with `npx wrangler d1 migrations apply cumplista --remote`.
-4. Set secrets with `npx wrangler secret put SESSION_SECRET` and `npx wrangler secret put RESEND_API_KEY`.
-5. Run `npm run deploy`. Workers read client IPs only from `CF-Connecting-IP`.
-
-## Known limits
-
-- The owner issues the invite links and codes, so an owner who invents a guest can join as that guest and read claims. This is visible to the other guests, who see who has joined.
-- Owner links do not expire.
-- List creation is limited per client (5 per hour, IPv6 grouped by /48) and per owner email (3 per day). There is no site-wide cap, because a cap shared by everyone lets a few addresses block every real user. A determined attacker with many addresses can still send owner emails, so put a CAPTCHA such as Turnstile in front of `POST /lists` if you host this publicly.
-- The item and idea caps are checked before the insert, so simultaneous requests can exceed them by a few rows.
-
-## Add a language
-
-1. Copy `src/i18n/locales/es.ts` to `src/i18n/locales/<code>.ts` and translate every key in `Messages`. `tsc` fails if any key from `src/i18n/locales/en.ts` is missing or extra.
-2. Import the locale in `src/i18n/index.ts` and register it in `LOCALES`. The footer language switcher and `Accept-Language` header negotiation read directly from `LOCALES`.
-3. Update `formatMoney` in `src/views/components.tsx` if the locale should display a currency other than `EUR`.
-
-## Verify
+You need Node 24 or newer. There is no database server to set up, because the app creates its SQLite file on first start.
 
 ```sh
-npm run typecheck
-npm test
+git clone https://github.com/YellowUmbrellaDev/cumplista.git
+cd cumplista
+npm ci
+npm start
 ```
+
+Open <http://localhost:8787>, create an account and make a list. In development, password reset emails are printed to the console.
+
+For a real server, set `NODE_ENV=production`, a `SESSION_SECRET` of at least 32 characters and your public `APP_URL`. The [self-hosting guide](docs/self-hosting.md) covers the rest, including Docker, a systemd unit, a reverse proxy with TLS and backups.
+
+## Deploy it
+
+| Option | Good for | Guide |
+| --- | --- | --- |
+| A server you control (Node and SQLite) | A VPS, a home server, a Raspberry Pi, Docker | [Self-hosting](docs/self-hosting.md) |
+| Cloudflare Workers (D1) | No server to maintain, deploys from GitHub Actions | [Cloudflare Workers](docs/cloudflare-workers.md) |
+
+Workers needs the Paid plan, because hashing passwords with 100000 PBKDF2 iterations takes more CPU time than the Free plan allows. The Cloudflare guide explains why.
+
+## Documentation
+
+| Guide | What is in it |
+| --- | --- |
+| [Self-hosting](docs/self-hosting.md) | Run on Node: configuration, data and backups, reverse proxy, systemd, Docker |
+| [Cloudflare Workers](docs/cloudflare-workers.md) | D1, secrets, email, custom domain, CI/CD |
+| [Configuration](docs/configuration.md) | Every environment variable, limits and caps, adding a language |
+| [Integrations](docs/integrations.md) | Turnstile, Google sign-in, mail drivers |
+| [Architecture](docs/architecture.md) | How the code is organised, the data model, auth and sessions |
+| [Development](docs/development.md) | Running tests, CI, adding a migration, a route or a language |
+| [AGENTS.md](AGENTS.md) | Rules for coding agents and contributors |
+
+## Optional integrations
+
+Everything below is off unless you configure it.
+
+- **Cloudflare Turnstile.** An invisible human check on owner signup, guest registration and the forgot-password form. Nobody sees a puzzle unless Cloudflare doubts they are human.
+- **Google sign-in.** Authorization code flow with PKCE and the scopes `openid email profile`.
+- **Email.** Used only to reset an owner's password. Drivers for Cloudflare Email Sending, Resend and SMTP, plus a console driver for development.
+
+## Built with
+
+[Hono](https://hono.dev) with server-rendered JSX, TypeScript, and a few lines of vanilla JavaScript for progressive enhancement. SQLite through `node:sqlite` on Node, D1 on Workers. The only runtime dependencies are `hono`, `@hono/node-server` and `nodemailer`.
+
+## Contributing
+
+Issues and pull requests are welcome. Open an issue first for anything large. Run `npm run typecheck` and `npm test` before you send a change, and add a test for any behaviour you change. [docs/development.md](docs/development.md) has the details, and [AGENTS.md](AGENTS.md) lists the rules that matter most, especially the privacy boundary.
+
+## License
+
+Cumplista is free software under the [GNU Affero General Public License v3.0](LICENSE). If you run a modified version as a network service, you must offer its source to the people who use it.
+
+Copyright (C) 2026 Yellow Umbrella.

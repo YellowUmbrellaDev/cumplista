@@ -4,3 +4,7 @@ node_modules
 data/
 dist/
 *.log
+
+.env*
+!.dev.vars.example
+worker-secrets.json
