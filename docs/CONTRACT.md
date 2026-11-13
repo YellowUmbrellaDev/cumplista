@@ -86,7 +86,7 @@ The link is `${APP_URL}/l/${listId}?i=${inviteToken}`. The code and the link are
 | `POST /lang` | anyone | sets `lang` cookie, redirects back |
 | `GET /healthz` | anyone | `ok` |
 
-Locale resolution: `lang` cookie, else Accept-Language, else `en`. A list's locale (used in emails and invite messages) is the owner's locale at creation. Language switcher is a tiny form in the footer.
+Locale resolution: `lang` cookie, else Accept-Language, else `en`. A list's locale (used in emails, invite messages and price formatting) is chosen by the owner at creation and can be changed later from the list page (`POST /o/:id/locale`). Language switcher is a tiny form in the footer.
 
 Guests adding gifts is IN scope (see Domain rules). Extra owner features IN scope (small): item `received` toggle, drag-free reorder by up/down buttons, "price total" of the whole list, `occasion_date` with days left. Out of scope: accounts, images, comments, multiple lists per user UI, currency selection.
 

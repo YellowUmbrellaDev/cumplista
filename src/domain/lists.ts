@@ -153,6 +153,19 @@ export async function regenerateInviteToken(deps: Deps, userId: UserId, listId: 
   return row ? toOwnerList(row) : null;
 }
 
+export async function setListLocale(
+  deps: Deps,
+  userId: UserId,
+  listId: ListId,
+  locale: LocaleCode,
+): Promise<boolean> {
+  if (!isLocale(locale)) return false;
+  const result = await deps.sql.run(
+    "UPDATE lists SET locale = ? WHERE id = ? AND owner_user_id = ?", locale, listId, userId,
+  );
+  return result.changes !== 0;
+}
+
 export async function deleteList(deps: Deps, userId: UserId, listId: ListId): Promise<boolean> {
   const result = await deps.sql.run("DELETE FROM lists WHERE id = ? AND owner_user_id = ?", listId, userId);
   return result.changes !== 0;

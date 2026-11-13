@@ -8,6 +8,7 @@ import {
   createList,
   deleteItem,
   deleteList,
+  setListLocale,
   getOwnerListView,
   listUserLists,
   moveItem,
@@ -41,7 +42,7 @@ function dashboardFlash(raw: string | undefined): DashboardPage["flash"] {
 }
 
 function ownerFlash(raw: string | undefined): OwnerPage["flash"] {
-  return raw === "invite-regenerated" || raw === "invalid" ? raw : undefined;
+  return raw === "invite-regenerated" || raw === "locale-saved" || raw === "invalid" ? raw : undefined;
 }
 
 async function buildOwnerPage(
@@ -218,6 +219,16 @@ export function ownerRoutes(getDeps: () => Deps): Hono {
     if (!listId) return c.notFound();
     const list = await regenerateInviteToken(deps, user.id, listId);
     return list ? c.redirect(`/o/${listId}?flash=invite-regenerated`) : c.notFound();
+  });
+
+  app.post("/o/:id/locale", postBodyLimit, async (c) => {
+    const { deps, user, listId } = await owned(c);
+    if (!user) return c.redirect("/login");
+    if (!listId) return c.notFound();
+    const requested = formString(await readForm(c), "locale").trim();
+    if (!isLocale(requested)) return invalid(c, deps, user, listId);
+    const saved = await setListLocale(deps, user.id, listId, requested);
+    return saved ? c.redirect(`/o/${listId}?flash=locale-saved`) : c.notFound();
   });
 
   app.post("/o/:id/delete", postBodyLimit, async (c) => {

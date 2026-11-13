@@ -523,6 +523,7 @@ describe("Cumplista v2 HTTP behaviour", () => {
       [`${list.ownerPath}/items/${item}/received`, { received: "1" }],
       [`${list.ownerPath}/items/${item}/move`, { direction: "up" }],
       [`${list.ownerPath}/invite`, {}],
+      [`${list.ownerPath}/locale`, { locale: "es" }],
       [`${list.ownerPath}/delete`, {}],
     ] satisfies [string, Record<string, string>][]) {
       expect((await postForm(path, fields, { jar: other })).status, path).toBe(404);
@@ -532,6 +533,22 @@ describe("Cumplista v2 HTTP behaviour", () => {
     expect(html).not.toContain("Intruder");
     expect(html).not.toContain("Hijacked");
     expect(itemIds(html)).toEqual([item]);
+  });
+
+  it("changes the list language after creation, reformats prices for owner and guests, and rejects unknown languages", async () => {
+    const list = await setupList();
+    await addItem(list, "Ceramic mug", { price: "24.50" });
+    const guest = await register(list);
+    expect(await (await getPage(list.ownerPath, { jar: list.ownerJar })).text()).toContain("$24.50");
+    expect(await (await getPage(`/l/${list.listId}/list`, { jar: guest })).text()).toContain("$24.50");
+    redirect(await postForm(`${list.ownerPath}/locale`, { locale: "es" }, { jar: list.ownerJar }), `${list.ownerPath}?flash=locale-saved`);
+    const owner = await (await getPage(list.ownerPath, { jar: list.ownerJar })).text();
+    expect(owner).toContain("24,50");
+    expect(owner).not.toContain("$24.50");
+    expect(await (await getPage(`/l/${list.listId}/list`, { jar: guest })).text()).toContain("24,50");
+    const rejected = await postForm(`${list.ownerPath}/locale`, { locale: "fr" }, { jar: list.ownerJar });
+    expect(rejected.status).toBe(400);
+    expect(await (await getPage(list.ownerPath, { jar: list.ownerJar })).text()).toContain("24,50");
   });
 
   it("regenerates the generic invite while existing guests retain access and can sign in", async () => {
@@ -890,7 +907,7 @@ describe("Cumplista v2 HTTP behaviour", () => {
     const guest = await register(list);
     const idea = await postForm(`/l/${list.listId}/ideas`, { name: "Protected idea" }, { jar: guest });
     const id = capture(idea.headers.get("location") ?? "", /#idea-([A-Za-z0-9_-]+)$/);
-    const paths = ["/signup", "/login", "/logout", "/forgot", "/reset/token", "/lang", "/lists", list.ownerPath + "/invite", list.ownerPath + "/delete",
+    const paths = ["/signup", "/login", "/logout", "/forgot", "/reset/token", "/lang", "/lists", list.ownerPath + "/invite", list.ownerPath + "/locale", list.ownerPath + "/delete",
       `${list.ownerPath}/items`, `${list.ownerPath}/items/${item}`, ...["delete", "received", "move"].map((action) => `${list.ownerPath}/items/${item}/${action}`),
       `${list.invitePath}/register`, `${list.invitePath}/login`, `/l/${list.listId}/login`, `/l/${list.listId}/logout`,
       `/l/${list.listId}/items/${item}/claim`, `/l/${list.listId}/items/${item}/unclaim`,

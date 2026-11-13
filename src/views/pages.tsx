@@ -587,6 +587,8 @@ function renderOwnerFlash(flash: OwnerPage["flash"], t: Translate) {
   switch (flash) {
     case "invite-regenerated":
       return renderStatus(t("owner.flash_invite_regenerated"));
+    case "locale-saved":
+      return renderStatus(t("owner.flash_locale_saved"));
     case "invalid":
       return renderAlert(t("error.invalid"));
     default: {
@@ -838,6 +840,22 @@ export function OwnerView(p: OwnerPage) {
             </form>
           </div>
         </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="list-locale-heading">
+        <h2 id="list-locale-heading">{t("owner.locale_heading")}</h2>
+        <p class="field-hint">{t("owner.locale_hint")}</p>
+        <form method="post" action={`/o/${p.list.id}/locale`} class="inline-form">
+          <label for="list-locale" class="sr-only">{t("dashboard.locale_label")}</label>
+          <select id="list-locale" name="locale">
+            {p.chrome.locales.map((entry) => (
+              <option key={entry.code} value={entry.code} selected={entry.code === p.list.locale}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+          <button type="submit" class="btn-chip">{t("owner.locale_save")}</button>
+        </form>
       </section>
 
       <section class="page-section danger-section" aria-label={t("owner.delete_list_toggle")}>

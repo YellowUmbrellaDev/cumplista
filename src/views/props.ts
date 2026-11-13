@@ -67,7 +67,7 @@ export type OwnerPage = {
   daysLeft: number | null;
   inviteUrl: string;
   share: ShareLinks;
-  flash?: "invite-regenerated" | "invalid" | undefined;
+  flash?: "invite-regenerated" | "locale-saved" | "invalid" | undefined;
 };
 
 export type InvitePage = {
