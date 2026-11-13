@@ -1057,6 +1057,25 @@ textarea:disabled {
   opacity: 0.72;
 }
 
+.gift-row.is-wrapped[data-peek] {
+  cursor: pointer;
+}
+
+.gift-row.is-wrapped.is-revealed .wrapped-body {
+  filter: none;
+  opacity: 1;
+  user-select: text;
+}
+
+.gift-row.is-wrapped.is-revealed .ribbon-stripe.is-ribbon {
+  opacity: 0;
+}
+
+.wrapped-body,
+.ribbon-stripe.is-ribbon {
+  transition: filter 160ms ease, opacity 160ms ease;
+}
+
 .gift-tag-dock {
   position: relative;
   z-index: 3;
