@@ -1,12 +1,12 @@
 import type { LocaleCode } from "../i18n/index.js";
 
+export type UserId = string & { readonly __brand: "UserId" };
 export type ListId = string & { readonly __brand: "ListId" };
 export type ItemId = string & { readonly __brand: "ItemId" };
 export type GuestId = string & { readonly __brand: "GuestId" };
 export type SideGiftId = string & { readonly __brand: "SideGiftId" };
-export type InviteCode = string & { readonly __brand: "InviteCode" };
-export type InviteToken = string & { readonly __brand: "InviteToken" };
 export type SessionNonce = string & { readonly __brand: "SessionNonce" };
+export type InviteToken = string & { readonly __brand: "InviteToken" };
 
 export type ItemDraft = {
   name: string;
@@ -15,17 +15,29 @@ export type ItemDraft = {
   details: string | null;
 };
 
+export type UserRecord = {
+  id: UserId;
+  email: string;
+  name: string;
+  hasPassword: boolean;
+  hasGoogle: boolean;
+};
+
+// What a guest may know about a list. No invite token, no owner email.
 export type ListRecord = {
   id: ListId;
   title: string;
   ownerName: string;
-  ownerEmail: string;
   locale: LocaleCode;
   occasionDate: string | null;
 };
 
-// The privacy boundary is the type system. OwnerItem has no claim field and no
-// service the owner can reach returns one. Do not add claim data to it.
+// What the owner sees of their own list. inviteToken is the generic link.
+export type OwnerList = ListRecord & { inviteToken: InviteToken };
+
+// The privacy boundary is the type system and the module graph. OwnerItem has
+// no claim field, and owner modules never reference guests, claims or
+// side_gifts. Do not add guest data to anything the owner path returns.
 export type OwnerItem = ItemDraft & { id: ItemId; received: boolean };
 
 export type GuestItemState =
@@ -39,23 +51,12 @@ export type GuestItem = ItemDraft & {
   state: GuestItemState;
 };
 
-// A gift a guest added outside the owner's list. Visible only to guests, with
-// the author's name so others avoid buying the same thing. Not blurred: the
-// point is that other guests read it.
+// A gift a guest added outside the owner's list. Only guests see it.
 export type SideGift = ItemDraft & { id: SideGiftId; byName: string; mine: boolean };
 
-export type OwnerGuest = {
-  id: GuestId;
-  name: string;
-  email: string | null;
-} & (
-  | { joined: false; code: InviteCode; inviteToken: InviteToken }
-  | { joined: true; code: null; inviteToken: null }
-);
-
 export type Principal =
-  | { role: "owner"; listId: ListId }
-  | { role: "guest"; listId: ListId; guestId: GuestId; sessionNonce: SessionNonce };
+  | { role: "owner"; userId: UserId; epoch: number }
+  | { role: "guest"; listId: ListId; guestId: GuestId; nonce: SessionNonce };
 
 export type MailOutcome = "sent" | "failed" | "capped";
 
