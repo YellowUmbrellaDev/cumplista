@@ -48,4 +48,24 @@
       input.select();
     });
   }
+
+  for (const row of document.querySelectorAll(".gift-row.is-wrapped")) {
+    const trigger = row.querySelector(".gift-inner");
+    if (!(row instanceof HTMLElement) || !(trigger instanceof HTMLElement)) continue;
+    row.dataset.peek = "";
+    trigger.tabIndex = 0;
+    trigger.setAttribute("role", "button");
+    trigger.setAttribute("aria-pressed", "false");
+    const toggle = () => {
+      const on = row.classList.toggle("is-revealed");
+      trigger.setAttribute("aria-pressed", String(on));
+    };
+    trigger.addEventListener("click", toggle);
+    trigger.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  }
 })();
