@@ -1,4 +1,4 @@
-import type { GuestItem, OwnerGuest, OwnerItem, SideGift } from "../domain/types.js";
+import type { GuestItem, OwnerItem, SideGift } from "../domain/types.js";
 import type { LocaleCode, Translate } from "../i18n/index.js";
 import {
   CheckIcon,
@@ -7,200 +7,43 @@ import {
   DraftAddRow,
   ExternalLinkIcon,
   InlineDraftEdit,
+  TurnstileWidget,
   formatHost,
   formatMoney,
   formatOccasionDate,
+  turnstileScripts,
 } from "./components.js";
 import { Layout } from "./layout.js";
 import type {
-  CreateListPage,
-  CreatedPage,
+  DashboardList,
+  DashboardPage,
+  ForgotPage,
   GuestListPage,
-  JoinPage,
+  GuestLoginPage,
+  InvitePage,
+  LandingPage,
+  LoginPage,
   OwnerPage,
-  ShareLinks,
+  ResetPage,
+  SignupPage,
 } from "./props.js";
 
-function renderCreateListError(error: CreateListPage["error"], t: Translate) {
-  if (!error) return null;
-  switch (error) {
-    case "invalid":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.invalid")}
-        </div>
-      );
-    case "rate-limited":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.rate_limited")}
-        </div>
-      );
-    default: {
-      const _exhaustive: never = error;
-      return _exhaustive;
-    }
-  }
-}
+export { TurnstileWidget } from "./components.js";
 
-export function CreateListView(p: CreateListPage) {
-  const { t } = p.chrome;
+function renderAlert(message: string) {
   return (
-    <Layout chrome={p.chrome} title={t("create.page_title")}>
-      <section class="hero-block">
-        <h1>{t("create.heading")}</h1>
-        <p class="lead-copy">{t("create.intro")}</p>
-      </section>
-
-      {renderCreateListError(p.error, t)}
-
-      <div class="surface-card surface-card-accent">
-        <form method="post" action="/lists" class="stack-form">
-          <div class="field-group">
-            <label for="create-title">{t("create.title_label")}</label>
-            <input
-              id="create-title"
-              name="title"
-              type="text"
-              required
-              maxlength={120}
-              placeholder={t("create.title_placeholder")}
-            />
-          </div>
-
-          <div class="field-row">
-            <div class="field-group">
-              <label for="create-owner-name">{t("create.owner_name_label")}</label>
-              <input
-                id="create-owner-name"
-                name="ownerName"
-                type="text"
-                required
-                maxlength={120}
-                autocomplete="name"
-                placeholder={t("create.owner_name_placeholder")}
-              />
-            </div>
-
-            <div class="field-group">
-              <label for="create-occasion-date">
-                <span>{t("create.occasion_date_label")}</span>
-                <span class="field-optional">{t("common.optional")}</span>
-              </label>
-              <input id="create-occasion-date" name="occasionDate" type="date" />
-            </div>
-          </div>
-
-          <div class="field-group">
-            <label for="create-owner-email">{t("create.owner_email_label")}</label>
-            <input
-              id="create-owner-email"
-              name="ownerEmail"
-              type="email"
-              required
-              maxlength={254}
-              autocomplete="email"
-              aria-describedby="create-email-hint"
-              placeholder={t("create.owner_email_placeholder")}
-            />
-            <p id="create-email-hint" class="field-hint">
-              {t("create.owner_email_hint")}
-            </p>
-          </div>
-
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary btn-wide">
-              {t("create.submit")}
-            </button>
-          </div>
-        </form>
-      </div>
-    </Layout>
+    <div class="flash flash-err" role="alert">
+      {message}
+    </div>
   );
 }
 
-export function CreatedView(p: CreatedPage) {
-  const { t } = p.chrome;
+function renderStatus(message: string) {
   return (
-    <Layout chrome={p.chrome} title={t("created.page_title", { title: p.list.title })}>
-      <section class="hero-block">
-        <h1>{t("created.heading")}</h1>
-        <p class="lead-copy">
-          {p.emailSent
-            ? t("created.email_sent", { email: p.list.ownerEmail })
-            : t("created.email_not_sent")}
-        </p>
-      </section>
-
-      <div class="surface-card surface-card-accent">
-        <div class="field-group">
-          <label for="manage-url-input">{t("created.manage_link_label")}</label>
-          <input
-            id="manage-url-input"
-            type="url"
-            readonly
-            value={p.manageUrl}
-            class="secret-url-input"
-          />
-        </div>
-        <div class="action-cluster">
-          <a href={p.manageUrl} class="btn btn-primary">
-            {t("created.open_list")}
-          </a>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            hidden
-            data-share-copy
-            data-share-text={p.manageUrl}
-            data-copied-label={t("common.copied")}
-          >
-            {t("common.copy_link")}
-          </button>
-        </div>
-      </div>
-    </Layout>
+    <div class="flash flash-ok" role="status">
+      {message}
+    </div>
   );
-}
-
-function renderOwnerFlash(flash: OwnerPage["flash"], t: Translate) {
-  if (!flash) return null;
-  switch (flash) {
-    case "guest-added":
-      return (
-        <div class="flash flash-ok" role="status">
-          {t("owner.flash_guest_added")}
-        </div>
-      );
-    case "mail-failed":
-      return (
-        <div class="flash flash-warn" role="alert">
-          {t("owner.flash_mail_failed")}
-        </div>
-      );
-    case "mail-capped":
-      return (
-        <div class="flash flash-warn" role="alert">
-          {t("owner.flash_mail_throttled")}
-        </div>
-      );
-    case "regen-mail-failed":
-      return (
-        <div class="flash flash-warn" role="alert">
-          {t("owner.flash_regen_mail_failed")}
-        </div>
-      );
-    case "invalid":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.invalid")}
-        </div>
-      );
-    default: {
-      const _exhaustive: never = flash;
-      return _exhaustive;
-    }
-  }
 }
 
 function renderDaysLeft(daysLeft: number | null, t: Translate) {
@@ -212,6 +55,545 @@ function renderDaysLeft(daysLeft: number | null, t: Translate) {
   else text = t("owner.days_passed");
 
   return <span class="pill pill-sun tabular">{text}</span>;
+}
+
+function GoogleSignInBlock({ enabled, t }: { enabled: boolean; t: Translate }) {
+  if (!enabled) return null;
+  return (
+    <div class="oauth-block">
+      <a href="/auth/google" class="btn btn-secondary btn-block">
+        {t("auth.google_continue")}
+      </a>
+      <div class="auth-divider" aria-hidden="true">
+        <span>{t("common.or")}</span>
+      </div>
+    </div>
+  );
+}
+
+export function LandingView(p: LandingPage) {
+  const { t } = p.chrome;
+  return (
+    <Layout chrome={p.chrome} title={t("landing.page_title")}>
+      <section class="hero-block">
+        <h1>{t("landing.heading")}</h1>
+        <p class="lead-copy">{t("landing.intro")}</p>
+        <div class="action-cluster">
+          <a href="/signup" class="btn btn-primary">
+            {t("landing.signup_cta")}
+          </a>
+          <a href="/login" class="btn btn-secondary">
+            {t("landing.login_cta")}
+          </a>
+        </div>
+      </section>
+
+      <section class="surface-card surface-card-accent" aria-labelledby="how-heading">
+        <h2 id="how-heading">{t("landing.how_heading")}</h2>
+        <ol class="steps-list">
+          <li>{t("landing.step_one")}</li>
+          <li>{t("landing.step_two")}</li>
+          <li>{t("landing.step_three")}</li>
+        </ol>
+      </section>
+    </Layout>
+  );
+}
+
+function renderSignupError(error: SignupPage["error"], t: Translate) {
+  if (!error) return null;
+  switch (error) {
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    case "weak-password":
+      return renderAlert(t("error.weak_password"));
+    case "email-taken":
+      return renderAlert(t("error.email_taken"));
+    case "captcha":
+      return renderAlert(t("error.captcha"));
+    case "rate-limited":
+      return renderAlert(t("error.rate_limited"));
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+export function SignupView(p: SignupPage) {
+  const { t } = p.chrome;
+  return (
+    <Layout
+      chrome={p.chrome}
+      title={t("signup.page_title")}
+      scripts={turnstileScripts(p.captchaSiteKey)}
+    >
+      <section class="hero-block">
+        <h1>{t("signup.heading")}</h1>
+        <p class="lead-copy">{t("signup.intro")}</p>
+      </section>
+
+      {renderSignupError(p.error, t)}
+
+      <div class="surface-card surface-card-accent">
+        <GoogleSignInBlock enabled={p.googleEnabled} t={t} />
+
+        <form method="post" action="/signup" class="stack-form">
+          <div class="field-group">
+            <label for="signup-name">{t("signup.name_label")}</label>
+            <input
+              id="signup-name"
+              name="name"
+              type="text"
+              required
+              maxlength={120}
+              autocomplete="name"
+              value={p.values.name}
+              placeholder={t("signup.name_placeholder")}
+            />
+          </div>
+
+          <div class="field-group">
+            <label for="signup-email">{t("auth.email_label")}</label>
+            <input
+              id="signup-email"
+              name="email"
+              type="email"
+              required
+              maxlength={254}
+              autocomplete="email"
+              value={p.values.email}
+              placeholder={t("auth.email_placeholder")}
+            />
+          </div>
+
+          <div class="field-group">
+            <label for="signup-password">{t("auth.password_label")}</label>
+            <input
+              id="signup-password"
+              name="password"
+              type="password"
+              required
+              minlength={10}
+              maxlength={200}
+              autocomplete="new-password"
+              aria-describedby="signup-password-hint"
+            />
+            <p id="signup-password-hint" class="field-hint">
+              {t("auth.password_hint")}
+            </p>
+          </div>
+
+          <TurnstileWidget siteKey={p.captchaSiteKey} />
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-wide">
+              {t("signup.submit")}
+            </button>
+          </div>
+        </form>
+
+        <p class="auth-links">
+          <span>{t("signup.have_account")}</span>{" "}
+          <a href="/login">{t("signup.login_link")}</a>
+        </p>
+      </div>
+    </Layout>
+  );
+}
+
+function renderLoginError(error: LoginPage["error"], t: Translate) {
+  if (!error) return null;
+  switch (error) {
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    case "wrong-credentials":
+      return renderAlert(t("error.wrong_credentials"));
+    case "throttled":
+      return renderAlert(t("error.throttled"));
+    case "google-failed":
+      return renderAlert(t("error.google_failed"));
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+export function LoginView(p: LoginPage) {
+  const { t } = p.chrome;
+  return (
+    <Layout chrome={p.chrome} title={t("login.page_title")}>
+      <section class="hero-block">
+        <h1>{t("login.heading")}</h1>
+        <p class="lead-copy">{t("login.intro")}</p>
+      </section>
+
+      {renderLoginError(p.error, t)}
+
+      <div class="surface-card surface-card-accent">
+        <GoogleSignInBlock enabled={p.googleEnabled} t={t} />
+
+        <form method="post" action="/login" class="stack-form">
+          <div class="field-group">
+            <label for="login-email">{t("auth.email_label")}</label>
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              required
+              maxlength={254}
+              autocomplete="email"
+              value={p.email}
+              placeholder={t("auth.email_placeholder")}
+            />
+          </div>
+
+          <div class="field-group">
+            <label for="login-password">{t("auth.password_label")}</label>
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              required
+              maxlength={200}
+              autocomplete="current-password"
+            />
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-wide">
+              {t("login.submit")}
+            </button>
+          </div>
+        </form>
+
+        <div class="auth-links">
+          <a href="/forgot">{t("login.forgot_link")}</a>
+          <span>
+            {t("login.no_account")} <a href="/signup">{t("login.signup_link")}</a>
+          </span>
+        </div>
+      </div>
+    </Layout>
+  );
+}
+
+function renderForgotError(error: ForgotPage["error"], t: Translate) {
+  if (!error) return null;
+  switch (error) {
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    case "captcha":
+      return renderAlert(t("error.captcha"));
+    case "rate-limited":
+      return renderAlert(t("error.rate_limited"));
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+export function ForgotView(p: ForgotPage) {
+  const { t } = p.chrome;
+  const activeSiteKey = p.sent ? null : p.captchaSiteKey;
+  return (
+    <Layout
+      chrome={p.chrome}
+      title={t("forgot.page_title")}
+      scripts={turnstileScripts(activeSiteKey)}
+    >
+      <section class="hero-block">
+        <h1>{t("forgot.heading")}</h1>
+        <p class="lead-copy">{t("forgot.intro")}</p>
+      </section>
+
+      {renderForgotError(p.error, t)}
+
+      {p.sent ? (
+        <div class="surface-card surface-card-accent stack-form">
+          <p role="status">{t("forgot.sent_notice")}</p>
+          <div class="form-actions">
+            <a href="/login" class="btn btn-secondary">
+              {t("forgot.back_to_login")}
+            </a>
+          </div>
+        </div>
+      ) : (
+        <div class="surface-card surface-card-accent">
+          <form method="post" action="/forgot" class="stack-form">
+            <div class="field-group">
+              <label for="forgot-email">{t("auth.email_label")}</label>
+              <input
+                id="forgot-email"
+                name="email"
+                type="email"
+                required
+                maxlength={254}
+                autocomplete="email"
+                placeholder={t("auth.email_placeholder")}
+              />
+            </div>
+
+            <TurnstileWidget siteKey={p.captchaSiteKey} />
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary btn-wide">
+                {t("forgot.submit")}
+              </button>
+            </div>
+          </form>
+
+          <p class="auth-links">
+            <a href="/login">{t("forgot.back_to_login")}</a>
+          </p>
+        </div>
+      )}
+    </Layout>
+  );
+}
+
+function renderResetError(error: ResetPage["error"], t: Translate) {
+  if (!error) return null;
+  switch (error) {
+    case "weak-password":
+      return renderAlert(t("error.weak_password"));
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+export function ResetView(p: ResetPage) {
+  const { t } = p.chrome;
+  switch (p.state) {
+    case "expired":
+      return (
+        <Layout chrome={p.chrome} title={t("reset.page_title")}>
+          <section class="hero-block">
+            <h1>{t("reset.expired_heading")}</h1>
+            <p class="lead-copy">{t("reset.expired_body")}</p>
+          </section>
+          <div class="action-cluster">
+            <a href="/forgot" class="btn btn-primary">
+              {t("reset.request_new")}
+            </a>
+            <a href="/login" class="btn btn-secondary">
+              {t("forgot.back_to_login")}
+            </a>
+          </div>
+        </Layout>
+      );
+
+    case "done":
+      return (
+        <Layout chrome={p.chrome} title={t("reset.page_title")}>
+          <section class="hero-block">
+            <h1>{t("reset.done_heading")}</h1>
+            <p class="lead-copy">{t("reset.done_body")}</p>
+          </section>
+          <div class="action-cluster">
+            <a href="/dashboard" class="btn btn-primary">
+              {t("reset.open_dashboard")}
+            </a>
+          </div>
+        </Layout>
+      );
+
+    case "form":
+      return (
+        <Layout chrome={p.chrome} title={t("reset.page_title")}>
+          <section class="hero-block">
+            <h1>{t("reset.heading")}</h1>
+          </section>
+
+          {renderResetError(p.error, t)}
+
+          <div class="surface-card surface-card-accent">
+            <form
+              method="post"
+              action={`/reset/${encodeURIComponent(p.token)}`}
+              class="stack-form"
+            >
+              <div class="field-group">
+                <label for="reset-password">{t("auth.new_password_label")}</label>
+                <input
+                  id="reset-password"
+                  name="password"
+                  type="password"
+                  required
+                  minlength={10}
+                  maxlength={200}
+                  autocomplete="new-password"
+                  aria-describedby="reset-password-hint"
+                />
+                <p id="reset-password-hint" class="field-hint">
+                  {t("auth.password_hint")}
+                </p>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-wide">
+                  {t("reset.submit")}
+                </button>
+              </div>
+            </form>
+          </div>
+        </Layout>
+      );
+
+    default: {
+      const _exhaustive: never = p.state;
+      return _exhaustive;
+    }
+  }
+}
+
+function renderDashboardFlash(flash: DashboardPage["flash"], t: Translate) {
+  if (!flash) return null;
+  switch (flash) {
+    case "created":
+      return renderStatus(t("dashboard.flash_created"));
+    case "deleted":
+      return renderStatus(t("dashboard.flash_deleted"));
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    case "rate-limited":
+      return renderAlert(t("error.rate_limited"));
+    case "cap-reached":
+      return renderAlert(t("dashboard.flash_cap_reached"));
+    default: {
+      const _exhaustive: never = flash;
+      return _exhaustive;
+    }
+  }
+}
+
+function DashboardListRow({
+  list,
+  displayLocale,
+  t,
+}: {
+  list: DashboardList;
+  displayLocale: LocaleCode;
+  t: Translate;
+}) {
+  const wishCount =
+    list.itemCount === 1
+      ? t("dashboard.item_count_one")
+      : t("dashboard.item_count_many", { count: list.itemCount });
+
+  return (
+    <li class="dashboard-card">
+      <a href={`/o/${list.id}`} class="dashboard-card-link">
+        <span class="item-name">{list.title}</span>
+        <span class="list-meta">
+          {renderDaysLeft(list.daysLeft, t)}
+          {list.occasionDate && (
+            <span class="meta-text">{formatOccasionDate(list.occasionDate, displayLocale)}</span>
+          )}
+          <span class="pill pill-muted tabular">{wishCount}</span>
+        </span>
+      </a>
+    </li>
+  );
+}
+
+export function DashboardView(p: DashboardPage) {
+  const { t } = p.chrome;
+  return (
+    <Layout chrome={p.chrome} title={t("dashboard.page_title")}>
+      {renderDashboardFlash(p.flash, t)}
+
+      <header class="list-head">
+        <h1>{t("dashboard.heading")}</h1>
+        <p class="meta-text">{t("dashboard.greeting", { name: p.userName })}</p>
+      </header>
+
+      <section class="page-section" aria-label={t("dashboard.heading")}>
+        {p.lists.length === 0 ? (
+          <p class="empty-state">{t("dashboard.empty_lists")}</p>
+        ) : (
+          <ul class="dashboard-list">
+            {p.lists.map((list) => (
+              <DashboardListRow
+                key={list.id}
+                list={list}
+                displayLocale={p.chrome.locale}
+                t={t}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section class="page-section" aria-labelledby="new-list-heading">
+        <h2 id="new-list-heading">{t("dashboard.new_list_heading")}</h2>
+        <div class="surface-card surface-card-accent">
+          <form method="post" action="/lists" class="stack-form">
+            <div class="field-group">
+              <label for="create-title">{t("dashboard.title_label")}</label>
+              <input
+                id="create-title"
+                name="title"
+                type="text"
+                required
+                maxlength={120}
+                placeholder={t("dashboard.title_placeholder")}
+              />
+            </div>
+
+            <div class="field-row">
+              <div class="field-group">
+                <label for="create-occasion-date">
+                  <span>{t("dashboard.occasion_date_label")}</span>
+                  <span class="field-optional">{t("common.optional")}</span>
+                </label>
+                <input id="create-occasion-date" name="occasionDate" type="date" />
+              </div>
+
+              <div class="field-group">
+                <label for="create-locale">{t("dashboard.locale_label")}</label>
+                <select id="create-locale" name="locale">
+                  {p.chrome.locales.map((entry) => (
+                    <option
+                      key={entry.code}
+                      value={entry.code}
+                      selected={entry.code === p.chrome.locale}
+                    >
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary btn-wide">
+                {t("dashboard.create_submit")}
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </Layout>
+  );
+}
+
+function renderOwnerFlash(flash: OwnerPage["flash"], t: Translate) {
+  if (!flash) return null;
+  switch (flash) {
+    case "invite-regenerated":
+      return renderStatus(t("owner.flash_invite_regenerated"));
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    default: {
+      const _exhaustive: never = flash;
+      return _exhaustive;
+    }
+  }
 }
 
 function OwnerChecklistRow({
@@ -328,99 +710,6 @@ function OwnerChecklistRow({
   );
 }
 
-function GuestShareRow({
-  guest,
-  share,
-  listId,
-  t,
-}: {
-  guest: OwnerGuest;
-  share: ShareLinks | undefined;
-  listId: string;
-  t: Translate;
-}) {
-  const guestBase = `/o/${listId}/guests/${guest.id}`;
-  return (
-    <li id={`guest-${guest.id}`} class="guest-row">
-      <div class="guest-top">
-        <div class="guest-identity">
-          <span class="guest-name">{guest.name}</span>
-          {guest.email && <span class="guest-email">{guest.email}</span>}
-        </div>
-        <div class="guest-badges">
-          {!guest.joined && (
-            <span class="pill pill-code tabular">
-              {t("owner.guest_code_label", { code: guest.code })}
-            </span>
-          )}
-          <span class={`pill ${guest.joined ? "pill-mint" : "pill-muted"}`}>
-            {guest.joined ? t("owner.guest_joined") : t("owner.guest_invited")}
-          </span>
-        </div>
-      </div>
-
-      <div class="guest-actions-bar">
-        {!guest.joined && share && (
-          <div class="share-block" data-share-text={share.text} data-share-url={share.url}>
-            <button
-              type="button"
-              class="btn-chip btn-chip-primary"
-              hidden
-              data-share-native
-              data-share-text={share.text}
-              data-share-url={share.url}
-            >
-              {t("owner.share_native")}
-            </button>
-            <button
-              type="button"
-              class="btn-chip"
-              hidden
-              data-share-copy
-              data-share-text={share.text}
-              data-copied-label={t("common.copied")}
-            >
-              {t("owner.share_copy")}
-            </button>
-            <a
-              href={share.whatsapp}
-              class="btn-chip"
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-            >
-              {t("owner.share_whatsapp")}
-            </a>
-            <a
-              href={share.telegram}
-              class="btn-chip"
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-            >
-              {t("owner.share_telegram")}
-            </a>
-            <a href={share.mailto} class="btn-chip">
-              {t("owner.share_email")}
-            </a>
-          </div>
-        )}
-
-        <div class="guest-manage-forms">
-          <form method="post" action={`${guestBase}/code`} class="inline-form">
-            <button type="submit" class="btn-chip">
-              {t("owner.regenerate_code")}
-            </button>
-          </form>
-          <form method="post" action={`${guestBase}/delete`} class="inline-form">
-            <button type="submit" class="btn-chip btn-danger-subtle">
-              {t("owner.remove_guest")}
-            </button>
-          </form>
-        </div>
-      </div>
-    </li>
-  );
-}
-
 export function OwnerView(p: OwnerPage) {
   const { t } = p.chrome;
   return (
@@ -428,6 +717,9 @@ export function OwnerView(p: OwnerPage) {
       {renderOwnerFlash(p.flash, t)}
 
       <header class="list-head">
+        <a href="/dashboard" class="back-link">
+          {t("owner.back_to_lists")}
+        </a>
         <h1>{p.list.title}</h1>
         <div class="list-meta">
           {renderDaysLeft(p.daysLeft, t)}
@@ -473,87 +765,111 @@ export function OwnerView(p: OwnerPage) {
         )}
       </section>
 
-      <section class="page-section" aria-labelledby="guests-heading">
+      <section class="page-section" aria-labelledby="invite-heading">
         <div class="section-head">
-          <h2 id="guests-heading">{t("owner.guests_heading")}</h2>
-          <p class="section-intro">{t("owner.guests_intro")}</p>
+          <h2 id="invite-heading">{t("owner.invite_heading")}</h2>
+          <p class="section-intro">{t("owner.invite_intro")}</p>
         </div>
 
-        <form method="post" action={`/o/${p.list.id}/guests`} class="surface-card guest-add-form">
-          <div class="field-row">
-            <div class="field-group">
-              <label for="add-guest-name">{t("owner.guest_name_label")}</label>
-              <input
-                id="add-guest-name"
-                name="name"
-                type="text"
-                required
-                maxlength={60}
-                placeholder={t("owner.guest_name_placeholder")}
-              />
-            </div>
-            <div class="field-group">
-              <label for="add-guest-email">
-                <span>{t("owner.guest_email_label")}</span>
-                <span class="field-optional">{t("common.optional")}</span>
-              </label>
-              <input
-                id="add-guest-email"
-                name="email"
-                type="email"
-                maxlength={254}
-                placeholder={t("owner.guest_email_placeholder")}
-              />
-            </div>
+        <div class="surface-card invite-panel">
+          <div class="field-group">
+            <label for="invite-url-input">{t("owner.invite_url_label")}</label>
+            <input
+              id="invite-url-input"
+              type="url"
+              readonly
+              value={p.inviteUrl}
+              class="secret-url-input"
+            />
           </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">
-              {t("owner.add_guest_submit")}
-            </button>
-          </div>
-        </form>
 
-        {p.guests.length === 0 ? (
-          <p class="empty-state">{t("owner.empty_guests")}</p>
-        ) : (
-          <ul class="guest-list">
-            {p.guests.map((guest) => (
-              <GuestShareRow
-                key={guest.id}
-                guest={guest}
-                share={p.shares[guest.id]}
-                listId={p.list.id}
-                t={t}
-              />
-            ))}
-          </ul>
-        )}
+          <div
+            class="share-block"
+            data-share-text={p.share.text}
+            data-share-url={p.share.url}
+          >
+            <button
+              type="button"
+              class="btn-chip btn-chip-primary"
+              hidden
+              data-share-native
+              data-share-text={p.share.text}
+              data-share-url={p.share.url}
+            >
+              {t("owner.share_native")}
+            </button>
+            <button
+              type="button"
+              class="btn-chip"
+              hidden
+              data-share-copy
+              data-share-text={p.inviteUrl}
+              data-copied-label={t("common.copied")}
+            >
+              {t("common.copy_link")}
+            </button>
+            <a
+              href={p.share.whatsapp}
+              class="btn-chip"
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+            >
+              {t("owner.share_whatsapp")}
+            </a>
+            <a
+              href={p.share.telegram}
+              class="btn-chip"
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+            >
+              {t("owner.share_telegram")}
+            </a>
+            <a href={p.share.mailto} class="btn-chip">
+              {t("owner.share_email")}
+            </a>
+          </div>
+
+          <div class="invite-regen-bar">
+            <p class="field-hint">{t("owner.regenerate_hint")}</p>
+            <form method="post" action={`/o/${p.list.id}/invite`} class="inline-form">
+              <button type="submit" class="btn-chip">
+                {t("owner.regenerate_invite")}
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section danger-section" aria-label={t("owner.delete_list_toggle")}>
+        <details class="inline-edit">
+          <summary class="btn-chip btn-danger-subtle">{t("owner.delete_list_toggle")}</summary>
+          <div class="edit-form">
+            <p class="field-hint">{t("owner.delete_list_warning")}</p>
+            <form method="post" action={`/o/${p.list.id}/delete`} class="inline-form">
+              <button type="submit" class="btn btn-primary">
+                {t("owner.delete_list_confirm")}
+              </button>
+            </form>
+          </div>
+        </details>
       </section>
     </Layout>
   );
 }
 
-function renderJoinError(error: JoinPage["error"], ownerName: string, t: Translate) {
+function renderInviteRegisterError(error: InvitePage["registerError"], t: Translate) {
   if (!error) return null;
   switch (error) {
-    case "wrong-code":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.wrong_code")}
-        </div>
-      );
-    case "code-used":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.code_used", { owner: ownerName })}
-        </div>
-      );
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    case "email-taken":
+      return renderAlert(t("invite_page.error_email_taken"));
+    case "captcha":
+      return renderAlert(t("error.captcha"));
     case "throttled":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.throttled")}
-        </div>
-      );
+      return renderAlert(t("error.throttled"));
+    case "full":
+      return renderAlert(t("invite_page.error_full"));
     default: {
       const _exhaustive: never = error;
       return _exhaustive;
@@ -561,49 +877,227 @@ function renderJoinError(error: JoinPage["error"], ownerName: string, t: Transla
   }
 }
 
-export function JoinView(p: JoinPage) {
+function renderGuestLoginError(error: GuestLoginPage["error"], t: Translate) {
+  if (!error) return null;
+  switch (error) {
+    case "invalid":
+      return renderAlert(t("error.invalid"));
+    case "wrong-credentials":
+      return renderAlert(t("guest_login.error_wrong_credentials"));
+    case "throttled":
+      return renderAlert(t("error.throttled"));
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+export function InviteView(p: InvitePage) {
   const { t } = p.chrome;
-  const missingInvite = p.invite === null;
+  const encodedToken = encodeURIComponent(p.token);
+  const openSignIn = Boolean(p.loginError || p.registerError === "email-taken");
+
   return (
-    <Layout chrome={p.chrome} title={t("join.page_title", { title: p.list.title })}>
-      <section class="hero-block">
+    <Layout
+      chrome={p.chrome}
+      title={t("invite_page.page_title", { title: p.list.title, owner: p.list.ownerName })}
+      scripts={turnstileScripts(p.captchaSiteKey)}
+    >
+      <section class="hero-block hero-compact">
         <h1>{p.list.title}</h1>
-        <p class="lead-copy">{t("join.subtitle", { owner: p.list.ownerName })}</p>
+        <p class="lead-copy">{t("invite_page.invited_by", { owner: p.list.ownerName })}</p>
+        {p.list.occasionDate && (
+          <div class="list-meta">
+            <span class="pill pill-sun">
+              {t("guest.occasion_date", {
+                date: formatOccasionDate(p.list.occasionDate, p.chrome.locale),
+              })}
+            </span>
+          </div>
+        )}
       </section>
 
-      {renderJoinError(p.error, p.list.ownerName, t)}
+      {renderInviteRegisterError(p.registerError, t)}
+      {renderGuestLoginError(p.loginError, t)}
 
-      {missingInvite && (
-        <div class="flash flash-warn" role="status">
-          {t("join.missing_invite", { owner: p.list.ownerName })}
-        </div>
-      )}
+      <div class="surface-card surface-card-accent">
+        <h2 class="card-heading">{t("invite_page.register_heading")}</h2>
+        <form method="post" action={`/i/${encodedToken}/register`} class="stack-form">
+          <div class="field-row-compact">
+            <div class="field-group">
+              <label for="reg-first-name">{t("invite_page.first_name_label")}</label>
+              <input
+                id="reg-first-name"
+                name="firstName"
+                type="text"
+                required
+                maxlength={60}
+                autocomplete="given-name"
+                value={p.values.firstName}
+                placeholder={t("invite_page.first_name_placeholder")}
+              />
+            </div>
 
-      <div class="surface-card surface-card-accent join-card">
-        <form method="post" action={`/l/${p.list.id}/join`} class="stack-form">
-          {p.invite !== null && <input type="hidden" name="invite" value={p.invite} />}
+            <div class="field-group">
+              <label for="reg-last-name">{t("invite_page.last_name_label")}</label>
+              <input
+                id="reg-last-name"
+                name="lastName"
+                type="text"
+                required
+                maxlength={60}
+                autocomplete="family-name"
+                value={p.values.lastName}
+                placeholder={t("invite_page.last_name_placeholder")}
+              />
+            </div>
+          </div>
+
           <div class="field-group">
-            <label for="join-code">{t("join.code_label")}</label>
+            <label for="reg-email">{t("invite_page.email_label")}</label>
             <input
-              id="join-code"
-              name="code"
+              id="reg-email"
+              name="email"
+              type="email"
+              required
+              maxlength={254}
+              autocomplete="email"
+              value={p.values.email}
+              placeholder={t("invite_page.email_placeholder")}
+            />
+          </div>
+
+          <div class="field-group">
+            <label for="reg-pin">{t("invite_page.pin_label")}</label>
+            <input
+              id="reg-pin"
+              name="pin"
               type="text"
               inputmode="numeric"
               pattern="[0-9]{4}"
               maxlength={4}
-              autocomplete="one-time-code"
+              autocomplete="off"
               required
-              disabled={missingInvite}
-              placeholder={t("join.code_placeholder")}
-              class="code-input tabular"
+              aria-describedby="reg-pin-hint"
+              placeholder={t("invite_page.pin_placeholder")}
+              class="pin-input tabular"
             />
+            <p id="reg-pin-hint" class="field-hint">
+              {t("invite_page.pin_hint")}
+            </p>
           </div>
+
+          <TurnstileWidget siteKey={p.captchaSiteKey} />
+
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary btn-wide" disabled={missingInvite}>
-              {t("join.submit")}
+            <button type="submit" class="btn btn-primary btn-block">
+              {t("invite_page.register_submit")}
             </button>
           </div>
         </form>
+      </div>
+
+      <details class="surface-card signin-disclosure" open={openSignIn}>
+        <summary class="signin-summary">{t("invite_page.already_registered")}</summary>
+        <form method="post" action={`/i/${encodedToken}/login`} class="stack-form signin-body">
+          <div class="field-group">
+            <label for="invite-login-email">{t("invite_page.email_label")}</label>
+            <input
+              id="invite-login-email"
+              name="email"
+              type="email"
+              required
+              maxlength={254}
+              autocomplete="email"
+              value={p.values.email}
+              placeholder={t("invite_page.email_placeholder")}
+            />
+          </div>
+
+          <div class="field-group">
+            <label for="invite-login-pin">{t("guest_login.pin_label")}</label>
+            <input
+              id="invite-login-pin"
+              name="pin"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]{4}"
+              maxlength={4}
+              autocomplete="off"
+              required
+              placeholder={t("guest_login.pin_placeholder")}
+              class="pin-input tabular"
+            />
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-block">
+              {t("guest_login.submit")}
+            </button>
+          </div>
+        </form>
+      </details>
+    </Layout>
+  );
+}
+
+export function GuestLoginView(p: GuestLoginPage) {
+  const { t } = p.chrome;
+  return (
+    <Layout
+      chrome={p.chrome}
+      title={t("guest_login.page_title", { title: p.list.title })}
+    >
+      <section class="hero-block">
+        <h1>{p.list.title}</h1>
+        <p class="lead-copy">{t("guest_login.subtitle", { owner: p.list.ownerName })}</p>
+      </section>
+
+      {renderGuestLoginError(p.error, t)}
+
+      <div class="surface-card surface-card-accent">
+        <form method="post" action={`/l/${p.list.id}/login`} class="stack-form">
+          <div class="field-group">
+            <label for="guest-login-email">{t("invite_page.email_label")}</label>
+            <input
+              id="guest-login-email"
+              name="email"
+              type="email"
+              required
+              maxlength={254}
+              autocomplete="email"
+              value={p.email}
+              placeholder={t("invite_page.email_placeholder")}
+            />
+          </div>
+
+          <div class="field-group">
+            <label for="guest-login-pin">{t("guest_login.pin_label")}</label>
+            <input
+              id="guest-login-pin"
+              name="pin"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]{4}"
+              maxlength={4}
+              autocomplete="off"
+              required
+              placeholder={t("guest_login.pin_placeholder")}
+              class="pin-input tabular"
+            />
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-wide">
+              {t("guest_login.submit")}
+            </button>
+          </div>
+        </form>
+
+        <p class="auth-links">
+          {t("guest_login.need_invite_hint", { owner: p.list.ownerName })}
+        </p>
       </div>
     </Layout>
   );
@@ -613,17 +1107,9 @@ function renderGuestFlash(flash: GuestListPage["flash"], t: Translate) {
   if (!flash) return null;
   switch (flash) {
     case "already-taken":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.already_taken")}
-        </div>
-      );
+      return renderAlert(t("error.already_taken"));
     case "invalid":
-      return (
-        <div class="flash flash-err" role="alert">
-          {t("error.invalid")}
-        </div>
-      );
+      return renderAlert(t("error.invalid"));
     default: {
       const _exhaustive: never = flash;
       return _exhaustive;

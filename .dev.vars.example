@@ -1,4 +1,11 @@
 APP_URL=http://localhost:8787
 MAIL_DRIVER=console
+MAIL_FROM=Cumplista <hola@localhost>
 ALLOW_CONSOLE_MAIL=1
 SESSION_SECRET=dev-only-change-me-at-least-32-chars
+
+# TURNSTILE_SITE_KEY=
+# TURNSTILE_SECRET=
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# RESEND_API_KEY=

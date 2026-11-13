@@ -5,11 +5,12 @@ import type { Chrome } from "./props.js";
 export type LayoutProps = {
   chrome: Chrome;
   title: string;
+  scripts?: readonly string[] | undefined;
   children: Child;
 };
 
-export function Layout({ chrome, title, children }: LayoutProps) {
-  const { t, locale, locales, path } = chrome;
+export function Layout({ chrome, title, scripts, children }: LayoutProps) {
+  const { t, locale, locales, path, session } = chrome;
   const fullTitle = `${title} | ${t("app.name")}`;
 
   return html`<!DOCTYPE html>${(
@@ -28,6 +29,9 @@ export function Layout({ chrome, title, children }: LayoutProps) {
         />
         <link rel="stylesheet" href="/app.css" />
         <script src="/app.js" defer></script>
+        {scripts?.map((src) => (
+          <script key={src} src={src} async defer></script>
+        ))}
       </head>
       <body>
         <a href="#main-content" class="skip-link">
@@ -39,6 +43,25 @@ export function Layout({ chrome, title, children }: LayoutProps) {
               <span class="brand-knot" aria-hidden="true"></span>
               <span class="brand-name">{t("app.name")}</span>
             </a>
+            {session ? (
+              <div class="header-actions">
+                <span class="session-user">{session.name}</span>
+                <form method="post" action={session.logoutAction} class="inline-form">
+                  <button type="submit" class="btn-chip">
+                    {t("nav.logout")}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <nav class="header-actions" aria-label={t("nav.account_label")}>
+                <a href="/login" class="btn-chip">
+                  {t("nav.login")}
+                </a>
+                <a href="/signup" class="btn-chip">
+                  {t("nav.signup")}
+                </a>
+              </nav>
+            )}
           </header>
           <main id="main-content" class="site-main">
             {children}

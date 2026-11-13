@@ -47,7 +47,7 @@ export async function listSideGifts(
        s.price_cents,
        s.url,
        s.details,
-       g.name AS author_name
+       g.first_name || ' ' || g.last_name AS author_name
      FROM side_gifts s
      JOIN guests g ON g.id = s.guest_id
      WHERE s.list_id = ?
@@ -70,7 +70,7 @@ export async function addSideGift(
   draft: ItemDraft,
 ): Promise<Result<SideGift, "not-found" | "cap-reached">> {
   const guestRow = await deps.sql.first<{ name: string }>(
-    `SELECT name FROM guests WHERE id = ? AND list_id = ?`,
+    `SELECT first_name || ' ' || last_name AS name FROM guests WHERE id = ? AND list_id = ?`,
     guestId,
     listId,
   );

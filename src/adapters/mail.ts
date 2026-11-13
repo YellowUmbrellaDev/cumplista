@@ -1,5 +1,15 @@
 import type { Env, Mail, Mailer } from "../ports.js";
 
+export type EmailBinding = {
+  send(msg: {
+    from: string;
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+  }): Promise<unknown>;
+};
+
 type SmtpTransporter = {
   sendMail(options: {
     from: string;
@@ -9,6 +19,9 @@ type SmtpTransporter = {
     html: string;
   }): Promise<unknown>;
 };
+
+const RESEND_TIMEOUT_MS = 10_000;
+const SUBJECT_CONTROL_CHARS = /[\u0000-\u001f\u007f]+/g;
 
 function hasCreateTransport(
   mod: unknown,
@@ -21,8 +34,6 @@ function hasCreateTransport(
   );
 }
 
-const SUBJECT_CONTROL_CHARS = /[\u0000-\u001f\u007f]+/g;
-
 function sanitizeMail(mail: Mail): Mail {
   return {
     ...mail,
@@ -30,7 +41,37 @@ function sanitizeMail(mail: Mail): Mail {
   };
 }
 
-export function createMailer(env: Env): Mailer {
+async function fetchWithTimeout(
+  fetchFn: typeof fetch | undefined,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`Mail request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    const doFetch: typeof fetch =
+      fetchFn ?? ((input, reqInit) => globalThis.fetch(input, reqInit));
+    const pending = Promise.resolve().then(() =>
+      doFetch(url, { ...init, signal: controller.signal }),
+    );
+    return await Promise.race([pending, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export function createMailer(
+  env: Env,
+  bindings?: { EMAIL?: EmailBinding | undefined },
+  fetchFn?: typeof fetch,
+): Mailer {
   let smtpTransporter: Promise<SmtpTransporter> | null = null;
 
   return {
@@ -49,24 +90,42 @@ export function createMailer(env: Env): Mailer {
           );
           return;
         }
+        case "cloudflare": {
+          if (!bindings?.EMAIL) {
+            throw new Error("EMAIL binding is required when MAIL_DRIVER=cloudflare");
+          }
+          await bindings.EMAIL.send({
+            from: env.MAIL_FROM,
+            to: mail.to,
+            subject: mail.subject,
+            text: mail.text,
+            html: mail.html,
+          });
+          return;
+        }
         case "resend": {
           if (!env.RESEND_API_KEY) {
             throw new Error("RESEND_API_KEY is required when MAIL_DRIVER=resend");
           }
-          const response = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${env.RESEND_API_KEY}`,
-              "Content-Type": "application/json",
+          const response = await fetchWithTimeout(
+            fetchFn,
+            "https://api.resend.com/emails",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${env.RESEND_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                from: env.MAIL_FROM,
+                to: [mail.to],
+                subject: mail.subject,
+                text: mail.text,
+                html: mail.html,
+              }),
             },
-            body: JSON.stringify({
-              from: env.MAIL_FROM,
-              to: [mail.to],
-              subject: mail.subject,
-              text: mail.text,
-              html: mail.html,
-            }),
-          });
+            RESEND_TIMEOUT_MS,
+          );
           if (!response.ok) {
             throw new Error(`Resend API returned HTTP ${response.status}`);
           }

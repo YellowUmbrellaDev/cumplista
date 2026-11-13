@@ -1,6 +1,17 @@
 import type { ItemDraft } from "../domain/types.js";
 import type { LocaleCode, Translate } from "../i18n/index.js";
 
+export const TURNSTILE_SCRIPT_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+
+export function turnstileScripts(siteKey: string | null): readonly string[] | undefined {
+  return siteKey !== null ? [TURNSTILE_SCRIPT_URL] : undefined;
+}
+
+export function TurnstileWidget({ siteKey }: { siteKey: string | null }) {
+  if (siteKey === null) return null;
+  return <div class="cf-turnstile" data-sitekey={siteKey} data-appearance="interaction-only"></div>;
+}
+
 export function formatMoney(cents: number, listLocale: LocaleCode): string {
   const currency = listLocale === "en" ? "USD" : "EUR";
   return new Intl.NumberFormat(listLocale, { style: "currency", currency }).format(cents / 100);

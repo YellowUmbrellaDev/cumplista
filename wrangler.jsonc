@@ -7,5 +7,8 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "cumplista", "database_id": "REPLACE_WITH_wrangler_d1_create", "migrations_dir": "migrations" }
   ],
+  "send_email": [
+    { "name": "EMAIL" }
+  ],
   "assets": { "directory": "public" }
 }

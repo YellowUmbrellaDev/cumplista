@@ -1,80 +1,55 @@
-import { sendMail } from "../adapters/mail.js";
 import type { Deps } from "../ports.js";
-import {
-  constantTimeEqual,
-  generateInviteCode,
-  generateInviteToken,
-  generateSessionNonce,
-  isGuestId,
-  isInviteCode,
-  isInviteToken,
-  isSessionNonce,
-  newGuestId,
-} from "./auth.js";
-import { composeGuestInviteMail } from "./invite.js";
-import { getList } from "./lists.js";
-import { DAY_MS, take, type RateRule } from "./rate.js";
-import type {
-  MailOutcome,
-  GuestId,
-  InviteCode,
-  InviteToken,
-  ListId,
-  ListRecord,
-  OwnerGuest,
-  Result,
-  SessionNonce,
-} from "./types.js";
+import { generateSessionNonce, isGuestId, isSessionNonce, newGuestId } from "./auth.js";
+import { burnVerify, hashSecret, isValidPin, verifySecret } from "./password.js";
+import { take } from "./rate.js";
+import type { GuestId, ListId, Result, SessionNonce } from "./types.js";
 
 export const MAX_GUESTS_PER_LIST = 200;
-export const THROTTLE_MAX_FAILURES = 8;
-export const THROTTLE_WINDOW_MS = 15 * 60 * 1000;
-export const GUEST_MAIL_DAILY_LIMIT = 30;
 
-export type AddGuestInput = {
-  name: string;
-  email: string | null;
+const HOUR_MS = 60 * 60 * 1000;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const REGISTER_HOURLY_LIMIT = 10;
+const LOGIN_EMAIL_LIMIT = 8;
+const LOGIN_CLIENT_LIMIT = 20;
+const MAX_GUEST_NAME_LENGTH = 60;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export type RegisterGuestInput = {
+  listId: ListId;
+  firstName: string;
+  lastName: string;
+  email: string;
+  pin: string;
 };
 
-type OwnerGuestRow = {
-  id: string;
-  name: string;
-  email: string | null;
-  code: string;
-  invite_token: string;
-  joined_at: string | null;
+export type LoginGuestInput = {
+  listId: ListId;
+  email: string;
+  pin: string;
 };
 
-type JoinGuestRow = {
+export type GuestSession = {
+  guestId: GuestId;
+  nonce: SessionNonce;
+  displayName: string;
+};
+
+type GuestAuthRow = {
   id: string;
-  name: string;
-  code: string;
-  invite_token: string;
+  first_name: string;
+  last_name: string;
+  pin_hash: string;
   session_nonce: string;
 };
 
-function toOwnerGuest(row: OwnerGuestRow): OwnerGuest | null {
-  if (!isGuestId(row.id) || !isInviteCode(row.code) || !isInviteToken(row.invite_token)) {
-    return null;
-  }
-  if (row.joined_at !== null) {
-    return {
-      id: row.id,
-      name: row.name,
-      email: row.email,
-      joined: true,
-      code: null,
-      inviteToken: null,
-    };
-  }
-  return {
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    joined: false,
-    code: row.code,
-    inviteToken: row.invite_token,
-  };
+type GuestPrincipalRow = {
+  id: string;
+  first_name: string;
+  last_name: string;
+};
+
+function formatDisplayName(firstName: string, lastName: string): string {
+  return `${firstName} ${lastName}`;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -86,329 +61,183 @@ function isUniqueConstraintError(err: unknown): boolean {
   );
 }
 
-async function sendGuestInviteIfAllowed(
+export async function registerGuest(
   deps: Deps,
-  list: ListRecord,
-  guest: { email: string; code: InviteCode; inviteToken: InviteToken },
-): Promise<MailOutcome> {
-  const nowMs = deps.now().getTime();
+  input: RegisterGuestInput,
+  client: string,
+): Promise<Result<GuestSession, "invalid" | "email-taken" | "throttled" | "full">> {
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName.trim();
+  const email = input.email.trim().toLowerCase();
+  if (
+    firstName.length < 1 ||
+    firstName.length > MAX_GUEST_NAME_LENGTH ||
+    lastName.length < 1 ||
+    lastName.length > MAX_GUEST_NAME_LENGTH ||
+    email.length < 3 ||
+    email.length > 254 ||
+    !EMAIL_PATTERN.test(email) ||
+    !isValidPin(input.pin)
+  ) {
+    return { ok: false, error: "invalid" };
+  }
+
+  const listClient = `${input.listId}:${client}`;
   const ticket = await take(
     deps,
-    { kind: "guest-mail", scope: list.id, client: "", at: nowMs },
+    { kind: "guest-register", scope: input.listId, client: listClient, at: deps.now().getTime() },
     [
       {
-        kind: "guest-mail",
-        scope: list.id,
-        client: null,
-        limit: GUEST_MAIL_DAILY_LIMIT,
-        windowMs: DAY_MS,
+        kind: "guest-register",
+        scope: null,
+        client: listClient,
+        limit: REGISTER_HOURLY_LIMIT,
+        windowMs: HOUR_MS,
       },
     ],
-  );
-  if (!ticket.ok) return "capped";
-  const mail = composeGuestInviteMail(list, guest, deps.env.APP_URL);
-  return (await sendMail(deps.mailer, mail)) ? "sent" : "failed";
-}
-
-export async function listOwnerGuests(deps: Deps, listId: ListId): Promise<OwnerGuest[]> {
-  const rows = await deps.sql.all<OwnerGuestRow>(
-    `SELECT id, name, email, code, invite_token, joined_at
-     FROM guests
-     WHERE list_id = ?
-     ORDER BY created_at ASC, rowid ASC`,
-    listId,
-  );
-  const guests: OwnerGuest[] = [];
-  for (const row of rows) {
-    const guest = toOwnerGuest(row);
-    if (guest) guests.push(guest);
-  }
-  return guests;
-}
-
-export async function addGuest(
-  deps: Deps,
-  listId: ListId,
-  input: AddGuestInput,
-): Promise<Result<{ guest: OwnerGuest; mail: MailOutcome }, "not-found" | "cap-reached">> {
-  const listResult = await getList(deps, listId);
-  if (!listResult.ok) return listResult;
-
-  const existingRows = await deps.sql.all<{ code: string }>(
-    `SELECT code FROM guests WHERE list_id = ?`,
-    listId,
-  );
-  if (existingRows.length >= MAX_GUESTS_PER_LIST) {
-    return { ok: false, error: "cap-reached" };
-  }
-
-  const usedCodes = new Set(existingRows.map((row) => row.code));
-  const id = newGuestId();
-  const sessionNonce = generateSessionNonce();
-  const createdAt = deps.now().toISOString();
-  let chosenCode: InviteCode | null = null;
-  let chosenToken: InviteToken | null = null;
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = generateInviteCode(usedCodes);
-    const inviteToken = generateInviteToken();
-    try {
-      await deps.sql.run(
-        `INSERT INTO guests (id, list_id, name, email, code, invite_token, session_nonce, joined_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-        id,
-        listId,
-        input.name,
-        input.email,
-        code,
-        inviteToken,
-        sessionNonce,
-        createdAt,
-      );
-      chosenCode = code;
-      chosenToken = inviteToken;
-      break;
-    } catch (err) {
-      if (isUniqueConstraintError(err)) {
-        usedCodes.add(code);
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  if (!chosenCode || !chosenToken) {
-    return { ok: false, error: "cap-reached" };
-  }
-
-  const guest: OwnerGuest = {
-    id,
-    name: input.name,
-    email: input.email,
-    code: chosenCode,
-    inviteToken: chosenToken,
-    joined: false,
-  };
-
-  let mail: MailOutcome = "sent";
-  if (input.email !== null) {
-    mail = await sendGuestInviteIfAllowed(deps, listResult.value, {
-      email: input.email,
-      code: chosenCode,
-      inviteToken: chosenToken,
-    });
-  }
-
-  return { ok: true, value: { guest, mail } };
-}
-
-export async function removeGuest(
-  deps: Deps,
-  listId: ListId,
-  guestId: GuestId,
-): Promise<Result<void, "not-found">> {
-  const res = await deps.sql.run(
-    `DELETE FROM guests WHERE id = ? AND list_id = ?`,
-    guestId,
-    listId,
-  );
-  if (res.changes === 0) return { ok: false, error: "not-found" };
-  return { ok: true, value: undefined };
-}
-
-export async function regenerateGuestCode(
-  deps: Deps,
-  listId: ListId,
-  guestId: GuestId,
-): Promise<Result<{ guest: OwnerGuest; mail: MailOutcome }, "not-found">> {
-  const listResult = await getList(deps, listId);
-  if (!listResult.ok) return listResult;
-
-  const guestRow = await deps.sql.first<OwnerGuestRow>(
-    `SELECT id, name, email, code, invite_token, joined_at
-     FROM guests
-     WHERE id = ? AND list_id = ?`,
-    guestId,
-    listId,
-  );
-  if (
-    !guestRow ||
-    !isGuestId(guestRow.id) ||
-    !isInviteCode(guestRow.code) ||
-    !isInviteToken(guestRow.invite_token)
-  ) {
-    return { ok: false, error: "not-found" };
-  }
-
-  const existingRows = await deps.sql.all<{ code: string }>(
-    `SELECT code FROM guests WHERE list_id = ?`,
-    listId,
-  );
-  const usedCodes = new Set(existingRows.map((row) => row.code));
-  usedCodes.add(guestRow.code);
-
-  const nextNonce = generateSessionNonce();
-  let nextCode: InviteCode | null = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const candidate = generateInviteCode(usedCodes);
-    try {
-      const res = await deps.sql.run(
-        `UPDATE guests
-         SET code = ?, session_nonce = ?, joined_at = NULL
-         WHERE id = ? AND list_id = ?`,
-        candidate,
-        nextNonce,
-        guestId,
-        listId,
-      );
-      if (res.changes === 0) return { ok: false, error: "not-found" };
-      nextCode = candidate;
-      break;
-    } catch (err) {
-      if (isUniqueConstraintError(err)) {
-        usedCodes.add(candidate);
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  if (!nextCode) return { ok: false, error: "not-found" };
-
-  const updated: OwnerGuest = {
-    id: guestRow.id,
-    name: guestRow.name,
-    email: guestRow.email,
-    joined: false,
-    code: nextCode,
-    inviteToken: guestRow.invite_token,
-  };
-
-  let mail: MailOutcome = "sent";
-  if (updated.email !== null) {
-    mail = await sendGuestInviteIfAllowed(deps, listResult.value, {
-      email: updated.email,
-      code: nextCode,
-      inviteToken: guestRow.invite_token,
-    });
-  }
-
-  return { ok: true, value: { guest: updated, mail } };
-}
-
-export async function getGuestForList(
-  deps: Deps,
-  listId: ListId,
-  guestId: GuestId,
-  sessionNonce: SessionNonce,
-): Promise<Result<{ id: GuestId; name: string }, "not-found">> {
-  const row = await deps.sql.first<{ id: string; name: string }>(
-    `SELECT id, name
-     FROM guests
-     WHERE id = ? AND list_id = ? AND session_nonce = ? AND joined_at IS NOT NULL`,
-    guestId,
-    listId,
-    sessionNonce,
-  );
-  if (!row || !isGuestId(row.id)) return { ok: false, error: "not-found" };
-  return { ok: true, value: { id: row.id, name: row.name } };
-}
-
-export async function joinWithCode(
-  deps: Deps,
-  listId: ListId,
-  rawInvite: string,
-  rawCode: string,
-  client: string,
-): Promise<
-  Result<
-    { list: ListRecord; guestId: GuestId; guestName: string; sessionNonce: SessionNonce },
-    "not-found" | "throttled" | "wrong-code" | "code-used"
-  >
-> {
-  const listResult = await getList(deps, listId);
-  if (!listResult.ok) return listResult;
-
-  const trimmedInvite = rawInvite.trim();
-  const guestRow = isInviteToken(trimmedInvite)
-    ? await deps.sql.first<JoinGuestRow>(
-        `SELECT id, name, code, invite_token, session_nonce
-         FROM guests
-         WHERE list_id = ? AND invite_token = ?`,
-        listId,
-        trimmedInvite,
-      )
-    : null;
-
-  const listClientKey = `${listId}:${client}`;
-  const tokenScope = guestRow ? `${listId}:${guestRow.invite_token}` : "";
-  const rules: RateRule[] = [
-    {
-      kind: "join",
-      scope: null,
-      client: listClientKey,
-      limit: THROTTLE_MAX_FAILURES,
-      windowMs: THROTTLE_WINDOW_MS,
-    },
-  ];
-  if (guestRow) {
-    rules.push({
-      kind: "join",
-      scope: tokenScope,
-      client: null,
-      limit: THROTTLE_MAX_FAILURES,
-      windowMs: THROTTLE_WINDOW_MS,
-    });
-  }
-
-  const nowMs = deps.now().getTime();
-  const ticket = await take(
-    deps,
-    { kind: "join", scope: tokenScope, client: listClientKey, at: nowMs },
-    rules,
   );
   if (!ticket.ok) {
     return { ok: false, error: "throttled" };
   }
 
-  const trimmedCode = rawCode.trim();
-  const validFormat = isInviteCode(trimmedCode);
-  const probe = validFormat ? trimmedCode : "0000";
-  const targetCode = guestRow ? guestRow.code : "0000";
-  const codeMatches = constantTimeEqual(targetCode, probe);
-
-  if (
-    !guestRow ||
-    !validFormat ||
-    !codeMatches ||
-    !isGuestId(guestRow.id) ||
-    !isInviteCode(guestRow.code) ||
-    !isSessionNonce(guestRow.session_nonce)
-  ) {
-    return { ok: false, error: "wrong-code" };
-  }
-
-  const consumed = await deps.sql.run(
-    `UPDATE guests
-     SET joined_at = ?
-     WHERE id = ? AND list_id = ? AND joined_at IS NULL`,
-    deps.now().toISOString(),
-    guestRow.id,
-    listId,
+  const existing = await deps.sql.first<{ id: string }>(
+    `SELECT id FROM guests WHERE list_id = ? AND email = ?`,
+    input.listId,
+    email,
   );
-  if (consumed.changes === 0) {
-    return { ok: false, error: "code-used" };
+  if (existing) {
+    return { ok: false, error: "email-taken" };
   }
 
-  await ticket.value.release();
+  const countRow = await deps.sql.first<{ count: number }>(
+    `SELECT COUNT(*) AS count FROM guests WHERE list_id = ?`,
+    input.listId,
+  );
+  if ((countRow?.count ?? 0) >= MAX_GUESTS_PER_LIST) {
+    return { ok: false, error: "full" };
+  }
+
+  const pinHash = await hashSecret(input.pin);
+  const guestId = newGuestId();
+  const nonce = generateSessionNonce();
+  const createdAt = deps.now().toISOString();
+
+  let inserted: { changes: number };
+  try {
+    inserted = await deps.sql.run(
+      `INSERT INTO guests (id, list_id, first_name, last_name, email, pin_hash, session_nonce, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE (SELECT COUNT(*) FROM guests WHERE list_id = ?) < ?`,
+      guestId,
+      input.listId,
+      firstName,
+      lastName,
+      email,
+      pinHash,
+      nonce,
+      createdAt,
+      input.listId,
+      MAX_GUESTS_PER_LIST,
+    );
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      return { ok: false, error: "email-taken" };
+    }
+    throw err;
+  }
+
+  if (inserted.changes === 0) {
+    return { ok: false, error: "full" };
+  }
 
   return {
     ok: true,
     value: {
-      list: listResult.value,
-      guestId: guestRow.id,
-      guestName: guestRow.name,
-      sessionNonce: guestRow.session_nonce,
+      guestId,
+      nonce,
+      displayName: formatDisplayName(firstName, lastName),
     },
+  };
+}
+
+export async function loginGuest(
+  deps: Deps,
+  input: LoginGuestInput,
+  client: string,
+): Promise<Result<GuestSession, "wrong-credentials" | "throttled">> {
+  const email = input.email.trim().toLowerCase();
+  const listEmail = `${input.listId}:${email}`;
+  const listClient = `${input.listId}:${client}`;
+  const ticket = await take(
+    deps,
+    { kind: "guest-login", scope: listEmail, client: listClient, at: deps.now().getTime() },
+    [
+      {
+        kind: "guest-login",
+        scope: listEmail,
+        client: null,
+        limit: LOGIN_EMAIL_LIMIT,
+        windowMs: LOGIN_WINDOW_MS,
+      },
+      {
+        kind: "guest-login",
+        scope: null,
+        client: listClient,
+        limit: LOGIN_CLIENT_LIMIT,
+        windowMs: LOGIN_WINDOW_MS,
+      },
+    ],
+  );
+  if (!ticket.ok) {
+    return { ok: false, error: "throttled" };
+  }
+
+  const row = await deps.sql.first<GuestAuthRow>(
+    `SELECT id, first_name, last_name, pin_hash, session_nonce
+     FROM guests
+     WHERE list_id = ? AND email = ?`,
+    input.listId,
+    email,
+  );
+  if (!row || !isValidPin(input.pin)) {
+    await burnVerify();
+    return { ok: false, error: "wrong-credentials" };
+  }
+
+  const valid = await verifySecret(input.pin, row.pin_hash);
+  if (!valid || !isGuestId(row.id) || !isSessionNonce(row.session_nonce)) {
+    return { ok: false, error: "wrong-credentials" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      guestId: row.id,
+      nonce: row.session_nonce,
+      displayName: formatDisplayName(row.first_name, row.last_name),
+    },
+  };
+}
+
+export async function getGuestForPrincipal(
+  deps: Deps,
+  listId: ListId,
+  guestId: GuestId,
+  nonce: SessionNonce,
+): Promise<{ id: GuestId; displayName: string } | null> {
+  const row = await deps.sql.first<GuestPrincipalRow>(
+    `SELECT id, first_name, last_name
+     FROM guests
+     WHERE id = ? AND list_id = ? AND session_nonce = ?`,
+    guestId,
+    listId,
+    nonce,
+  );
+  if (!row || !isGuestId(row.id)) {
+    return null;
+  }
+  return {
+    id: row.id,
+    displayName: formatDisplayName(row.first_name, row.last_name),
   };
 }

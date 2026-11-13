@@ -1,16 +1,15 @@
 import type {
   GuestId,
-  InviteCode,
   InviteToken,
   ItemId,
   ListId,
   Principal,
   SessionNonce,
   SideGiftId,
+  UserId,
 } from "./types.js";
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const INVITE_CODE_PATTERN = /^[0-9]{4}$/;
 const TOKEN_128_PATTERN = /^[A-Za-z0-9_-]{22,64}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -45,7 +44,7 @@ export function fromBase64Url(encoded: string): Uint8Array<ArrayBuffer> | null {
   }
 }
 
-function randomBase64Url(byteLength: number): string {
+export function randomToken(byteLength: number): string {
   const bytes = new Uint8Array(byteLength);
   crypto.getRandomValues(bytes);
   return toBase64Url(bytes);
@@ -60,7 +59,7 @@ export function parseListId(value: unknown): ListId | null {
 }
 
 export function newListId(): ListId {
-  const id = randomBase64Url(12);
+  const id = randomToken(12);
   if (!isListId(id)) throw new Error("Generated invalid ListId");
   return id;
 }
@@ -74,7 +73,7 @@ export function parseItemId(value: unknown): ItemId | null {
 }
 
 export function newItemId(): ItemId {
-  const id = randomBase64Url(12);
+  const id = randomToken(12);
   if (!isItemId(id)) throw new Error("Generated invalid ItemId");
   return id;
 }
@@ -88,7 +87,7 @@ export function parseGuestId(value: unknown): GuestId | null {
 }
 
 export function newGuestId(): GuestId {
-  const id = randomBase64Url(12);
+  const id = randomToken(12);
   if (!isGuestId(id)) throw new Error("Generated invalid GuestId");
   return id;
 }
@@ -102,17 +101,9 @@ export function parseSideGiftId(value: unknown): SideGiftId | null {
 }
 
 export function newSideGiftId(): SideGiftId {
-  const id = randomBase64Url(12);
+  const id = randomToken(12);
   if (!isSideGiftId(id)) throw new Error("Generated invalid SideGiftId");
   return id;
-}
-
-export function isInviteCode(value: unknown): value is InviteCode {
-  return typeof value === "string" && INVITE_CODE_PATTERN.test(value);
-}
-
-export function parseInviteCode(value: unknown): InviteCode | null {
-  return isInviteCode(value) ? value : null;
 }
 
 export function isInviteToken(value: unknown): value is InviteToken {
@@ -124,7 +115,7 @@ export function parseInviteToken(value: unknown): InviteToken | null {
 }
 
 export function generateInviteToken(): InviteToken {
-  const token = randomBase64Url(16);
+  const token = randomToken(16);
   if (!isInviteToken(token)) throw new Error("Generated invalid InviteToken");
   return token;
 }
@@ -134,25 +125,9 @@ export function isSessionNonce(value: unknown): value is SessionNonce {
 }
 
 export function generateSessionNonce(): SessionNonce {
-  const nonce = randomBase64Url(16);
+  const nonce = randomToken(16);
   if (!isSessionNonce(nonce)) throw new Error("Generated invalid SessionNonce");
   return nonce;
-}
-
-export function generateInviteCode(existing: ReadonlySet<string> = new Set()): InviteCode {
-  if (existing.size >= 10_000) {
-    throw new Error("Invite code space exhausted");
-  }
-  const buf = new Uint16Array(1);
-  for (;;) {
-    crypto.getRandomValues(buf);
-    const sample = buf[0];
-    // 60000 is the largest multiple of 10000 below 65536, so rejecting >= 60000 avoids modulo bias.
-    if (sample === undefined || sample >= 60_000) continue;
-    const candidate = String(sample % 10_000).padStart(4, "0");
-    if (existing.has(candidate)) continue;
-    if (isInviteCode(candidate)) return candidate;
-  }
 }
 
 export function constantTimeEqual(a: string, b: string): boolean {
@@ -166,13 +141,23 @@ export function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export function generateOwnerToken(): string {
-  return randomBase64Url(32);
+export function isUserId(value: unknown): value is UserId {
+  return typeof value === "string" && SAFE_ID_PATTERN.test(value);
 }
 
-export async function hashOwnerToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", utf8Bytes(token));
-  return toBase64Url(new Uint8Array(digest));
+export function parseUserId(value: unknown): UserId | null {
+  return isUserId(value) ? value : null;
+}
+
+export function newUserId(): UserId {
+  const id = randomToken(12);
+  if (!isUserId(id)) throw new Error("Generated invalid UserId");
+  return id;
+}
+
+export async function sha256Hex(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", utf8Bytes(s));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function importHmacKey(secret: string): Promise<CryptoKey> {
@@ -186,31 +171,29 @@ async function importHmacKey(secret: string): Promise<CryptoKey> {
 }
 
 function isPrincipal(value: unknown): value is Principal {
-  if (typeof value !== "object" || value === null) return false;
-  if (!("role" in value) || !("listId" in value) || !isListId(value.listId)) return false;
-  if (value.role === "owner") return true;
-  if (value.role === "guest") {
-    return (
-      "guestId" in value &&
-      isGuestId(value.guestId) &&
-      "sessionNonce" in value &&
-      isSessionNonce(value.sessionNonce)
-    );
+  if (typeof value !== "object" || value === null || !("role" in value)) return false;
+  if (value.role === "owner") {
+    return "userId" in value && isUserId(value.userId) &&
+      "epoch" in value && typeof value.epoch === "number" &&
+      Number.isSafeInteger(value.epoch) && value.epoch >= 0;
   }
-  return false;
+  return value.role === "guest" &&
+    "listId" in value && isListId(value.listId) &&
+    "guestId" in value && isGuestId(value.guestId) &&
+    "nonce" in value && isSessionNonce(value.nonce);
 }
 
-export async function signPrincipal(principal: Principal, secret: string): Promise<string> {
-  const payload = toBase64Url(utf8Bytes(JSON.stringify(principal)));
+async function signPayload(value: unknown, secret: string): Promise<string> {
+  const payload = toBase64Url(utf8Bytes(JSON.stringify(value)));
   const key = await importHmacKey(secret);
   const sigBuffer = await crypto.subtle.sign("HMAC", key, utf8Bytes(payload));
   return `${payload}.${toBase64Url(new Uint8Array(sigBuffer))}`;
 }
 
-export async function verifyPrincipal(
+async function verifyPayload(
   cookieValue: string | undefined,
   secret: string,
-): Promise<Principal | null> {
+): Promise<unknown> {
   if (!cookieValue) return null;
   const dotIndex = cookieValue.indexOf(".");
   if (dotIndex <= 0 || cookieValue.indexOf(".", dotIndex + 1) !== -1) return null;
@@ -226,19 +209,41 @@ export async function verifyPrincipal(
   if (!valid) return null;
 
   try {
-    const decoded: unknown = JSON.parse(new TextDecoder().decode(payloadBytes));
-    return isPrincipal(decoded) ? decoded : null;
+    return JSON.parse(new TextDecoder().decode(payloadBytes));
   } catch {
     return null;
   }
 }
 
-export function ownerCookieName(listId: ListId): string {
-  return `o_${listId}`;
+export async function signPrincipal(p: Principal, secret: string): Promise<string> {
+  return signPayload(p, secret);
+}
+
+export async function verifyPrincipal(raw: string | undefined, secret: string): Promise<Principal | null> {
+  const value = await verifyPayload(raw, secret);
+  return isPrincipal(value) ? value : null;
+}
+
+export async function signValue(payload: string, secret: string, ttlSeconds: number, now: Date): Promise<string> {
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) throw new Error("Invalid cookie lifetime");
+  return signPayload({ payload, expiresAt: now.getTime() + ttlSeconds * 1000 }, secret);
+}
+
+export async function verifyValue(signed: string | undefined, secret: string, now: Date): Promise<string | null> {
+  const value = await verifyPayload(signed, secret);
+  if (typeof value !== "object" || value === null ||
+      !("payload" in value) || typeof value.payload !== "string" ||
+      !("expiresAt" in value) || typeof value.expiresAt !== "number" ||
+      !Number.isFinite(value.expiresAt) || value.expiresAt <= now.getTime()) return null;
+  return value.payload;
+}
+
+export function ownerCookieName(): string {
+  return "cp_owner";
 }
 
 export function guestCookieName(listId: ListId): string {
-  return `g_${listId}`;
+  return `cp_g_${listId}`;
 }
 
 export function isSameOrigin(originHeader: string | undefined, appUrl: string): boolean {
