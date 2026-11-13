@@ -148,9 +148,13 @@ function startNodeServer(): void {
   }
   serverApp.route("/", createApp(() => deps));
 
-  const server = serve({ fetch: serverApp.fetch, port }, (info) => {
-    console.info(`Cumplista listening on http://localhost:${info.port}`);
-  });
+  const hostname = process.env.HOST?.trim() ?? "";
+  const server = serve(
+    { fetch: serverApp.fetch, port, ...(hostname ? { hostname } : {}) },
+    (info) => {
+      console.info(`Cumplista listening on http://${hostname || "localhost"}:${info.port}`);
+    },
+  );
 
   function shutdown() {
     server.close(() => {
