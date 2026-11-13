@@ -152,6 +152,8 @@ export async function completeReset(
 ): Promise<Result<SignedIn, "expired" | "weak-password">> {
   if (!RESET_PATTERN.test(token)) return { ok: false, error: "expired" };
   if (!isValidPassword(password)) return { ok: false, error: "weak-password" };
+  // Unknown tokens must not cost a PBKDF2 derivation, or anyone could burn CPU here.
+  if (!(await previewReset(deps, token))) return { ok: false, error: "expired" };
   const passwordHash = await hashSecret(password);
   const tokenHash = await sha256Hex(token);
   // The batch consumes the token with the update; the unique salted hash identifies its winner.

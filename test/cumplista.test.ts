@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSqliteSql, type SqliteSql } from "../src/adapters/sqlite.js";
 import { createApp, MAX_FORM_BYTES, parseSafeBack } from "../src/app.js";
 import type { Captcha, Deps, Env, GoogleAuth, GoogleProfile, Mail } from "../src/ports.js";
@@ -331,6 +331,28 @@ describe("Cumplista v2 HTTP behaviour", () => {
     expect(res.status).toBe(410);
     expect(res.headers.has("set-cookie")).toBe(false);
     redirect(await postForm("/login", { email: OWNER.email, password: PASSWORD }), "/dashboard");
+  });
+
+  it("answers a reset with an unknown token without running a password derivation", async () => {
+    const derive = vi.spyOn(crypto.subtle, "deriveBits");
+    try {
+      const unknown = `/reset/${"A".repeat(43)}`;
+      const before = derive.mock.calls.length;
+      for (let i = 0; i < 5; i++) {
+        const res = await postForm(unknown, { password: NEW_PASSWORD });
+        expect(res.status).toBe(410);
+      }
+      expect(derive.mock.calls.length - before).toBe(0);
+
+      await signup();
+      await postForm("/forgot", { email: OWNER.email });
+      const real = resetPath();
+      const beforeReal = derive.mock.calls.length;
+      redirect(await postForm(real, { password: NEW_PASSWORD }), "/dashboard");
+      expect(derive.mock.calls.length - beforeReal).toBeGreaterThan(0);
+    } finally {
+      derive.mockRestore();
+    }
   });
 
   it("keeps forgot-password responses identical during a mail outage", async () => {
@@ -887,8 +909,8 @@ describe("Cumplista v2 HTTP behaviour", () => {
 
   it("allows only local dashboard, invite and list return paths and rejects open redirect bypasses", async () => {
     const token = "abcdefghijklmnopqrstuv";
-    const safe = ["/", "/dashboard", "/dashboard?flash=created", "/o/abc_123-XYZ", "/o/abc_123?flash=invite-regenerated", "/l/abc_123", "/l/abc_123/list", "/l/abc_123/list?flash=already-taken", `/i/${token}`, `/i/${token}?flash=invalid`];
-    const unsafe = ["/.//evil.com", "/.//evil.com/phish", "/..//evil.com", "/%2e%2e//evil.com", "/a/..//evil.com", "/\t/evil.example", "/o/abc\t", "//evil.example", "/\\evil.example", "/o/abc\\list", "/o/abc?x=1", "/o/abc?flash=UPPER", "/other/abc", "https://evil.example", "/dashboard/../evil", `/i/${token}/register`, "/i/short", `/i/${token}?next=//evil.example`, "/dashboard?flash=created&next=//evil.example", "/dashboard\r\nLocation: https://evil.example"];
+    const safe = ["/", "/dashboard", "/signup", "/login", "/forgot", "/dashboard?flash=created", "/o/abc_123-XYZ", "/o/abc_123?flash=invite-regenerated", "/l/abc_123", "/l/abc_123/list", "/l/abc_123/list?flash=already-taken", `/i/${token}`, `/i/${token}?flash=invalid`];
+    const unsafe = ["/.//evil.com", "/.//evil.com/phish", "/..//evil.com", "/%2e%2e//evil.com", "/a/..//evil.com", "/\t/evil.example", "/o/abc\t", "//evil.example", "/\\evil.example", "/o/abc\\list", "/o/abc?x=1", "/o/abc?flash=UPPER", "/other/abc", "/reset/abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", "/login?next=//evil.example", "https://evil.example", "/dashboard/../evil", `/i/${token}/register`, "/i/short", `/i/${token}?next=//evil.example`, "/dashboard?flash=created&next=//evil.example", "/dashboard\r\nLocation: https://evil.example"];
     for (const path of safe) {
       expect(parseSafeBack(path)).toBe(path);
       redirect(await postForm("/lang", { lang: "es", back: path }), path);

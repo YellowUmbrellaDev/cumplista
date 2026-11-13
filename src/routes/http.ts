@@ -19,7 +19,7 @@ export const MAX_FORM_BYTES = 16 * 1024;
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 const SAFE_BACK_PATTERN =
-  /^(?:\/(?:dashboard)?|\/(?:o|l)\/[A-Za-z0-9_-]+(?:\/list)?|\/i\/[A-Za-z0-9_-]{22,64})(?:\?flash=[a-z-]+)?$/;
+  /^(?:\/(?:dashboard|signup|login|forgot)?|\/(?:o|l)\/[A-Za-z0-9_-]+(?:\/list)?|\/i\/[A-Za-z0-9_-]{22,64})(?:\?flash=[a-z-]+)?$/;
 
 const AVAILABLE_LOCALES: { code: LocaleCode; name: string }[] = [];
 for (const [code, meta] of Object.entries(LOCALES)) {
